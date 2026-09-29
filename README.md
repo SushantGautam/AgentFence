@@ -10,180 +10,121 @@ login node down with it.
 It writes no sandbox of its own. It switches on and standardises the ones the
 agents already ship, and puts ordinary OS limits underneath them.
 
-Written for an HPC cluster and generalised from there; hostnames and paths in
-the examples are placeholders, so substitute your own.
+```bash
+sudo ./agentfence          # what would change. Changes nothing.
+sudo ./agentfence apply    # make it so. Asks first.
+```
 
-**How far this has actually been tested.** CI installs it on a throwaway
-Ubuntu runner on every push and checks that the policy that lands is valid and
-carries the site paths, that a second `apply` is a no-op, that tampering with
-the installed policy is detected and repaired, and that `uninstall` leaves
-nothing behind. What has *not* happened: a run on a real multi-user machine,
-with real users, a real shared filesystem, Slurm, or `bwrap` and `cplt`
-actually present — CI has neither installed. So the convergence logic is
-exercised and the enforcement is not. Treat a first `apply` on a real node as
-untested: one node, watched.
+That is the whole interface. `apply` writes only what is missing or has been
+edited, so it covers first install, upgrades and repairing a node someone has
+poked at. Run it as often as you like.
+
+---
 
 ## Install
 
-Three ways in. The first is the one to use on a node that matters.
+Pick whichever fits the machine.
 
-**A release artefact, verified before it runs.** AgentFence runs as root on a
-machine shared by many people, so download and verification are deliberately
-separate steps from execution:
+**A release artefact.** Needs no network at run time, which matters on nodes
+that have none:
 
 ```bash
 curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence
 curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence.sha256
-sha256sum -c agentfence.sha256       # do this before running anything as root
-chmod +x agentfence
-sudo ./agentfence                    # shows what would change. Changes nothing.
-sudo ./agentfence apply              # makes it so. Asks first.
+sha256sum -c agentfence.sha256
+chmod +x agentfence && sudo ./agentfence apply
 ```
 
-**Built from this repository**, which is the same bytes from the same source:
+**With uv**, if the node has `uv` and outbound network. Pin it so you know what
+you are running:
 
 ```bash
-make dist                            # one file, plus its .sha256
-scp dist/agentfence login1:
-ssh login1 'sudo ./agentfence'
+uvx --from git+https://github.com/SushantGautam/AgentFence@v0.1.0 agentfence apply
 ```
 
-**With uv**, for a throwaway or test machine:
+Compute nodes usually have neither `uv` nor outbound network, which is the only
+reason this is not the default. Where both exist it is fine.
+
+**From source:**
 
 ```bash
-uvx --from git+https://github.com/SushantGautam/AgentFence agentfence apply
+make dist && scp dist/agentfence login1:
 ```
 
-Convenient, and worse in one specific way: uv resolves and fetches from the
-network at the moment you run it, and that code then executes as root on the
-node. There is no artefact to check first. Use it where a compromise would not
-matter, and use the release artefact where it would.
+`agentfence` is one self-contained file. Copy it anywhere and run it.
 
-## Run it
-
-Start on one node.
-
-That is the whole thing. Run it with no arguments to see the difference between
-what is on the node and what should be; run `apply` to close the gap.
-
-`apply` writes only what is missing or has been edited, leaves everything else
-alone, and stops with "nothing to do" if the node already matches. Run it as
-often as you like. It is also how you roll out a later change to the policy,
-and how you put a file back if someone edits it on the node.
-
-Once you are happy with one node, do the rest:
+## Use it
 
 ```bash
-sudo ./agentfence apply --nodes "node01 node02 node03" --yes
+agentfence                 # status: what differs. Exit 0 match, 1 drift, 2 error.
+agentfence apply           # make the node match
+agentfence config          # the settings in effect, and where each came from
+agentfence init            # write out templates you can edit
+agentfence uninstall       # remove everything it installed
 ```
 
-To undo everything: `sudo ./agentfence uninstall`.
+Flags: `--config FILE`, `--policy-dir DIR`, `--nodes "a b c"` (over ssh),
+`--yes`, `--role login|compute`, `--no-packages`.
 
-## Settings
-
-Where a site keeps shared home directories, software trees and project space
-differs per machine, and there is no sensible default, so these are settings
-rather than constants baked into the payload.
-
-One set of names, three ways to supply them. A config file is the one to use
-for more than a single node. `init` writes you a starting point — no source
-checkout needed, just the binary:
-
-```bash
-./agentfence init --config ./site.conf     # writes a commented template
-$EDITOR ./site.conf
-sudo ./agentfence apply --config ./site.conf
-```
-
-The file is `KEY=value`, `#` comments allowed. It is never sourced as a
-shell script and unknown keys are reported and ignored, so a typo is visible
-rather than silent:
-
-```ini
-AGENTFENCE_SITE_NAME="Physics cluster"
-AGENTFENCE_SHARED_HOMES="/shared/home /export/home"
-AGENTFENCE_SHARED_APPS="/shared/apps"
-AGENTFENCE_SHARED_WORKSPACES="/shared/projects"
-```
-
-The same names work as environment variables, with `sudo -E` so they survive:
-
-```bash
-AGENTFENCE_SHARED_HOMES="/shared/home" sudo -E ./agentfence apply
-```
-
-**Precedence**, highest first: `--config`, then the environment, then
-`/etc/agentfence/site.env`, then the defaults. A `--config` file that cannot
-be read is an error — it will not quietly fall back to defaults and install a
-weaker policy than you asked for.
-
-To see what a run would actually use, and which layer each value came from:
-
-```console
-$ agentfence config
-Settings (login1)
-  AGENTFENCE_SITE_NAME          Physics cluster            ./agentfence.conf
-  AGENTFENCE_SHARED_HOMES       /shared/home               ./agentfence.conf
-  AGENTFENCE_MEMORY_MAX         64G                        environment
-  AGENTFENCE_CPU_QUOTA          400%                       default
-  ...
-```
-
-It reads nothing else, changes nothing, and needs no root. A setting that is
-not doing what you expect is nearly always one that is set somewhere else.
-
-| Variable | What it does | Default |
-|---|---|---|
-| `AGENTFENCE_SITE_NAME` | Named in the banner users see at startup | `This shared machine` |
-| `AGENTFENCE_SHARED_HOMES` | Other people's homes: unreadable, and their `.ssh` denied outright | none |
-| `AGENTFENCE_SHARED_APPS` | Shared software: readable, never writable | none |
-| `AGENTFENCE_SHARED_WORKSPACES` | Shared project space agents are allowed to read | none |
-| `AGENTFENCE_MEMORY_HIGH` / `_MAX` | Soft and hard memory caps, login nodes only | `8G` / `16G` |
-| `AGENTFENCE_CPU_QUOTA` / `AGENTFENCE_TASKS_MAX` | CPU and PID caps, login nodes only | `400%` / `4096` |
-| `AGENTFENCE_SHIM_AGENTS` | Agents that get a cplt shim on `PATH` | `copilot opencode goose` |
-
-Each takes a space-separated list, and every path must be absolute. A relative
-path, a bare `/`, a wildcard or a `..` is refused before anything is written —
-those would silently turn a narrow rule into one covering the whole filesystem.
-
-`AGENTFENCE_SHARED_WORKSPACES` matters more than it looks. `allowManagedReadPathsOnly`
-is on, so a directory not listed there cannot be read at all: without it,
-agents on a site whose projects live outside `$HOME` cannot see their own work.
-
-`apply` records what you passed in `/etc/agentfence/site.env` and reads it back
-on later runs, so a bare `agentfence` from cron compares against the same
-settings instead of reporting drift against itself. That file is itself a valid
-`--config` file: copy it to another node to give it the same settings.
-
-With `--nodes`, the config file is copied to each host along with the installer,
-so a fleet cannot drift apart because one node was missing a variable.
-
-Memory and CPU caps work the same way:
-
-```bash
-AGENTFENCE_MEMORY_MAX=32G AGENTFENCE_CPU_QUOTA=800% sudo -E ./agentfence apply
-```
-
-Run with no arguments from cron to be told when a node drifts — it exits 0 if
-the node matches and 1 if it does not:
+The exit codes make `agentfence || alert` work from cron:
 
 ```bash
 agentfence --nodes "$(cat nodes.txt)" || mail -s "agent policy drift" you@example.org
 ```
 
-## Changing the policy
+## Tell it about your site
 
-The deny list, sandbox rules and audit rules ship in the payload. An admin does
-**not** edit this repository or rebuild anything to change them — point at a
-directory of your own instead:
+Where your shared filesystems live differs per machine, so it is a setting, not
+something to edit in a file. `init` writes you a commented template:
 
 ```bash
-./agentfence init --policy-dir ./policy      # writes the shipped files + a README
+./agentfence init --config ./site.conf
+$EDITOR ./site.conf
+sudo ./agentfence apply --config ./site.conf
+```
+
+| Setting | What it does | Default |
+|---|---|---|
+| `AGENTFENCE_SITE_NAME` | Named in the banner users see | `This shared machine` |
+| `AGENTFENCE_SHARED_HOMES` | Other people's homes: unreadable, `.ssh` denied | none |
+| `AGENTFENCE_SHARED_APPS` | Shared software: readable, never writable | none |
+| `AGENTFENCE_SHARED_WORKSPACES` | Shared project space agents may read | none |
+| `AGENTFENCE_MEMORY_HIGH` / `_MAX` | Memory caps, login nodes only | `8G` / `16G` |
+| `AGENTFENCE_CPU_QUOTA` / `_TASKS_MAX` | CPU and PID caps, login nodes only | `400%` / `4096` |
+| `AGENTFENCE_SHIM_AGENTS` | Agents that get a cplt shim | `copilot opencode goose` |
+
+Each takes a space-separated list, and paths must be absolute. A relative path,
+a bare `/`, a wildcard or a `..` is refused before anything is written — each
+would widen a narrow rule to cover the whole filesystem.
+
+Set `AGENTFENCE_SHARED_WORKSPACES` if your projects live outside `$HOME`.
+Anything not listed there cannot be read at all, so without it agents cannot
+see their own work.
+
+The same names work as environment variables, with `sudo -E`. **Precedence**,
+highest first: `--config`, the environment, `/etc/agentfence/site.env`, the
+defaults. `apply` records what you used, so a later bare `agentfence` from cron
+compares against the same settings rather than reporting drift against itself.
+
+```console
+$ agentfence config
+AGENTFENCE_SHARED_HOMES   /shared/home    ./site.conf
+AGENTFENCE_MEMORY_MAX     64G             environment
+AGENTFENCE_CPU_QUOTA      400%            default
+```
+
+## Change the policy
+
+You do not edit this repository and you do not rebuild anything. Point at a
+directory of your own:
+
+```bash
+./agentfence init --policy-dir ./policy
 $EDITOR ./policy/...
 sudo ./agentfence apply --policy-dir ./policy --config ./site.conf
 ```
 
-`init` drops every shipped file in as `<name>.shipped` for reference, plus an
+`init` drops in every shipped file as `<name>.shipped` for reference, plus an
 empty overlay and a README. Nothing there is read until you create a real file
 next to it:
 
@@ -191,271 +132,97 @@ next to it:
 |---|---|---|
 | Add audit rules, `PATH` lines, anything line-based | `50-agentfence-audit.rules.append` | Shipped content kept, yours appended |
 | Add Claude Code rules | `managed-settings.overlay.json` | Merged into the shipped policy |
-| Replace a file outright | `50-agentfence-audit.rules` | Yours wins; the shipped one is ignored |
-| Install extra files of your own | `desired-state` | `src:/abs/dest:0644:login,compute:always` per line |
+| Replace a file outright | `50-agentfence-audit.rules` | Yours wins |
+| Install files of your own | `desired-state` | `src:/abs/dest:0644:login,compute:always` per line |
 
-Prefer `.append` and the overlay. **A replaced file stops tracking the shipped
-one**, including later fixes to it.
+Prefer `.append` and the overlay — a replaced file stops tracking the shipped
+one, including later fixes to it.
 
-Two limits on overlays, both deliberate:
+Two deliberate limits on overlays. They **add but never subtract**: leaving a
+shipped rule out does not remove it, because removal should be a visible act
+rather than a side effect of a short overlay. And they **cannot switch off
+enforcement** — `sandbox.enabled`, `failIfUnavailable`,
+`allowUnsandboxedCommands`, `allowManagedPermissionRulesOnly` and
+`disableBypassPermissionsMode` are refused before anything is written:
 
-- **They add, they do not subtract.** Lists are appended to, so leaving a
-  shipped rule out of your overlay does not remove it. Removing something
-  requires replacing the whole file — a visible act, not a side effect of a
-  short overlay.
-- **They cannot switch off enforcement.** `sandbox.enabled`,
-  `failIfUnavailable`, `allowUnsandboxedCommands`,
-  `allowManagedPermissionRulesOnly` and `disableBypassPermissionsMode` are
-  refused before anything is written:
-
-  ```
-  agentfence: the overlay sets sandbox.failIfUnavailable to False; it must stay True
-  ```
-
-To see exactly which files are shipped, replaced, appended to or merged,
-changing nothing:
-
-```bash
-agentfence config --policy-dir ./policy --config ./site.conf
+```
+agentfence: the overlay sets sandbox.failIfUnavailable to False; it must stay True
 ```
 
-A `--config` or `--policy-dir` that does not exist is an **error**, never a
-silent fall back to defaults — a typo in a filename must not quietly install a
-weaker policy than you asked for. `init` is how you create them.
+`agentfence config --policy-dir ./policy` shows which files are shipped,
+replaced, appended to or merged.
 
-### What ships, and where it lands
+A `--config` or `--policy-dir` that does not exist is an error, never a silent
+fall back to defaults — a typo in a filename must not quietly install a weaker
+policy than you asked for.
 
-| File | Lands as | What it is |
-|---|---|---|
-| `policy/managed-settings.json` | `/etc/claude-code/managed-settings.json` | Claude Code policy: deny list, sandbox, credential files |
-| `policy/cplt-config.toml` | `/etc/agentfence/cplt.toml` | cplt policy for every other agent, via `$CPLT_CONFIG` |
-| `policy/50-agentfence-audit.rules` | `/etc/audit/rules.d/50-…` | what auditd records |
-| `policy/50-agentfence-user-limits.conf` | `/etc/systemd/system/user-.slice.d/50-…` | the caps; login nodes, and only if nothing else is limiting |
-| `policy/profile.d-agentfence.sh` | `/etc/profile.d/10-agentfence.sh` | sets `PATH` and `CPLT_CONFIG` at login |
-| `policy/bin/agentfence-shim` | `/opt/agentfence/bin/agentfence-shim` | routes other agents through cplt |
-
-These stay in their own native formats rather than being generated from the
-settings file. Each is validated against its own upstream schema — `managed-settings.json` against
-`json.schemastore.org`, where **an unknown key is ignored with no error**, so a
-typo is indistinguishable from a working setting; generating it from another
-format would put a translation step exactly where that typo would hide. And a
-policy every site can quietly loosen is not a policy. Settings describe your
-machine; the policy is the decision, and it is meant to be the same everywhere.
-
-Settings reach the policy at exactly one place: `engine/render-settings.py`
-injects your paths into `managed-settings.json` as it is installed, and merges
-your overlay if you have one.
-
-### What it puts on a node
+## What it puts on a node
 
 - A policy file for Claude Code, so an agent cannot read `~/.ssh`, write to
-  `/etc`, or run `sudo`, and its shell commands run inside a sandbox.
-- The same for other agents (Copilot, OpenCode, goose), using cplt.
-- A cap on how much memory and CPU one person can use on a login node — only
-  if nothing is already doing that job.
-- Audit rules that record it if someone edits the policy files.
+  `/etc` or run `sudo`, and its shell commands run in a sandbox.
+- The same for other agents (Copilot, OpenCode, goose), via
+  [cplt](https://github.com/navikt/cplt).
+- Per-user memory and CPU caps on **login nodes only**, and only if nothing
+  else is already doing that job.
+- Audit rules recording any edit to the policy files themselves.
 
-It does not touch compute nodes' resource limits. Slurm already handles those.
+It adds nothing to compute nodes' resource limits — Slurm owns those.
 
----
+| Lands as | From |
+|---|---|
+| `/etc/claude-code/managed-settings.json` | `policy/managed-settings.json` |
+| `/etc/agentfence/cplt.toml` | `policy/cplt-config.toml` |
+| `/etc/agentfence/site.env` | your settings |
+| `/etc/audit/rules.d/50-agentfence-audit.rules` | `policy/50-agentfence-audit.rules` |
+| `/etc/profile.d/10-agentfence.sh` | `policy/profile.d-agentfence.sh` |
+| `/opt/agentfence/bin/` | `policy/bin/agentfence-shim` plus symlinks |
+| `/etc/systemd/system/user-.slice.d/` | `policy/50-agentfence-user-limits.conf` |
 
-## Threat model (read this first)
+Undo all of it:
 
-Two different threats got merged in the original thread. Separating them is
-what makes a small solution possible.
-
-| | Threat | Design response |
-|---|---|---|
-| **1** | An agent does something destructive **under the user's own authority**: `rm -rf ~/data`, `scancel` someone else's job, `make -j128` on a login node, reads `~/.ssh/id_rsa` into a prompt. | This is the real risk. It is defeated by ordinary OS controls plus the agents' own sandboxes. |
-| **2** | A user **deliberately** weaponises an agent. | Not addressed, on purpose. The user already has a shell; the agent adds no capability. Designing for this produces an unmaintainable AppArmor/exec-interception arms race, which is where the original thread was heading. |
-
-Consequence: "can a user bypass it?" stops being the deciding question for the
-agent-level layers. The user is not the attacker. The agent is the risk, and
-the agent cannot write `/etc`.
-
-No configuration is 100% against a motivated user. This one aims only at
-threat 1, which is the failure mode actually observed. How well it holds is
-not yet measured — see the note at the top.
-
-## Architecture
-
-```
-  Layer A   systemd user slices · filesystem perms · pam_slurm_adopt
-            mandatory · editor-agnostic · survives any new agent
-                              │
-  Layer B1  Claude Code  ──► its own bubblewrap sandbox
-            /etc/claude-code/managed-settings.json   (maintained by Anthropic)
-  Layer B2  every other agent ──► navikt/cplt  (Landlock + seccomp)
-            /opt/agentfence/bin shims on PATH              (maintained by NAV)
-                              │
-  Layer C   auditd watch on the policy files themselves
+```bash
+sudo ./agentfence uninstall
 ```
 
-Layer A is the boundary. Layers B1/B2 are ergonomics: they make the safe
-invocation the default one. If a user installs their own agent in `$HOME`,
-Layer A still holds.
+bubblewrap and cplt are left installed; removing packages is not this script's
+business.
 
-## What we reuse, and what we rejected
+## How far this is tested
 
-| Component | Role | Why |
-|---|---|---|
-| **Claude Code managed settings + built-in bwrap sandbox** | Claude Code containment | Already ships the exact sandbox the thread was proposing to build. Anthropic maintains the bwrap invocation, the credential masking and the CVE response, not us. |
-| **[navikt/cplt](https://github.com/navikt/cplt)** | every other agent | Landlock + seccomp + CONNECT proxy + git/gh guards, apt-installable from NAV's repo, already wraps Copilot CLI, OpenCode, goose, Antigravity. Writing our own bubblewrap wrapper would be strictly worse. |
-| **systemd `user-.slice` drop-in** | per-user CPU/RAM/PID caps, **login nodes only** | Stock, and only applied when nothing else is already doing the job — see "Who owns resource limits" below. |
-| **`pam_slurm_adopt` + Slurm cgroups** | compute-node containment | SchedMD's own recommendation. Unbypassable. Off by default here — see the warning below. |
-| **auditd** | tamper evidence | Stock. Low-volume watches on the policy files, not full `execve` logging. |
-| **[OpenAgentLock](https://github.com/openagentlock/OpenAgentLock)** | **rejected** | Checked against its own docs, not dismissed on principle: the daemon is a Docker container bound to `127.0.0.1:7878`/`7879` with a `agentlock-state` volume, `agentlock install` and signer enrolment are per-user commands, and the CLI "owns the long-lived signing key" on the host. OIDC SSO, RBAC and LDAP are listed as *not yet*. That is one daemon, one Docker socket and one TOTP enrolment per account across ~60 users on a shared login node, with no central policy push. Its YAML gate + Merkle ledger is a good idea and the right thing to revisit **if** a multi-user/server mode lands — worth opening an issue upstream. |
-| **Per-agent AppArmor profiles** | **rejected** | A coding agent exists to run `gcc`, `python`, `git`, `uv`, `npm`. A profile permissive enough for that permits nearly everything, and breaks on every toolchain update. Fails the "easy to maintain" requirement hardest. |
-| **Name-based exec interception** | **rejected** | `cp ~/bin/claude ~/bin/foo` defeats it. |
+CI installs it on a throwaway Ubuntu runner on every push and checks that the
+policy that lands is valid and carries your paths, that a second `apply` is a
+no-op, that tampering is detected and repaired, and that `uninstall` leaves
+nothing behind.
 
-## Who owns resource limits
-
-**Compute nodes: Slurm, and we add nothing.** `cgroup.conf` with
-`ConstrainRAMSpace` / `ConstrainCores` / `ConstrainDevices`, plus
-`pam_slurm_adopt`, already caps every process in an allocation. Duplicating any
-of that here would be a second source of truth for the same numbers. The only
-compute-node task in this repo is `pam_slurm_adopt` itself, and it is gated off.
-
-**Login nodes: Slurm cannot help.** A `vscode-server` or `claude-server` on
-a login node is not inside an allocation, so there is no job cgroup to
-constrain. This is exactly the population that an audit of logins found
-invisible to `who` and `last`: users who only ever connect through a remote
-IDE.
-
-Before touching that, the installer looks for an existing limiter — an
-`arbiter`/`arbiter2`/`cgroup-warden` unit or binary, `/etc/arbiter*`, or any
-other drop-in in `user-.slice.d` — and stands down if it finds one, saying what
-it found. Two tools managing the same slice is worse than one.
-
-The caps themselves come from the environment, so there is nothing to edit:
-`AGENTFENCE_MEMORY_HIGH` (8G), `AGENTFENCE_MEMORY_MAX` (16G), `AGENTFENCE_CPU_QUOTA` (400%),
-`AGENTFENCE_TASKS_MAX` (4096), applied to login nodes only, with root exempt.
-
-### Why not Arbiter2
-
-[Arbiter2](https://github.com/CHPC-UofU/arbiter2) is the HPC-community answer
-for login-node policing and would be the obvious thing to reuse. It does not
-apply here: its `CGROUPS.md` states it uses **cgroups v1 only**, and the last
-release is v2.1.0 from April 2022. On a cgroups v2 node it silently does
-nothing, which is worse than no limiter at all.
-
-Its successor [Arbiter3](https://github.com/chpc-uofu/arbiter) does support
-cgroups v2 and is actively developed, but it is a Django application plus
-Prometheus plus a per-node Go [`cgroup-warden`](https://github.com/chpc-uofu/cgroup-warden)
-agent, at v0.0.8. It is a better long-term answer than four systemd keys and a
-strictly larger operational commitment: it notifies users and escalates through
-penalty tiers instead of silently OOM-killing them. If a site adopts it, this
-script will detect it and leave the slices alone on its own.
-
-## Bugs in the draft `managed-settings.json` from the thread
-
-These are worth calling out because each one silently produced *no* policy,
-with no error:
-
-1. **`#` comments.** JSON has none. The file fails to parse and Claude Code
-   falls back to defaults. `tools/validate.sh` checks this.
-2. **`Read(/etc/**)` is not an absolute path.** In permission-rule syntax a
-   single `/` means *relative to the settings file*, so that rule resolved to
-   `/etc/claude-code/etc/**` and matched nothing. Absolute needs a double
-   slash: `Read(//etc/**)`.
-3. **`$USER` and `!( )` do not expand.** `Read(/home/!(|$USER)/**)` is bash
-   extglob plus a shell variable; the rule matcher does neither. The
-   "protect other users' homes" rules were inert. Real protection is
-   `chmod 700` (Layer A) and `sandbox.filesystem.denyRead` with an
-   `allowRead: ["~/"]` re-allow, which is what we ship.
-4. **`"defaultMode": "auto"` together with `"disableAutoMode": "disable"`**
-   contradict each other.
-5. **Over-blocking.** `Bash(curl *)`, `Bash(sh *)`, `Bash(bash *)`,
-   `Bash(docker *)`, `Read(/etc/**)` and `Bash(nvidia-smi *)` break ordinary
-   HPC work — `nvidia-smi` is read-only. Users hit the wall, install their own
-   client in `$HOME`, and you lose the visibility the policy was for. Our deny
-   list is 11 entries, all irreversible or shared-blast-radius.
-
-Two settings do most of the work and were missing entirely:
-
-- `sandbox.failIfUnavailable: true` — without it a missing `bwrap` means the
-  sandbox is silently skipped with a warning.
-- `requiredMinimumVersion` — an older client ignores unknown keys with no
-  error, so the whole policy is a no-op on it.
+It has **not** run on a real multi-user machine — no real users, no shared
+filesystem, no Slurm, and CI installs neither `bwrap` nor `cplt`. The
+convergence logic is exercised; the enforcement is not. Treat a first `apply`
+on a real node as untested: one node, watched.
 
 ## Layout
 
 ```
-engine/                         the code - site-independent
-  installer-template.sh         plan / diff / apply; the installer minus payload
-  render-settings.py            merges a site overlay, injects site paths
-
-policy/                         the base policy - all of this lands on a node
-  managed-settings.json         -> /etc/claude-code/managed-settings.json
-  cplt-config.toml              -> /etc/agentfence/cplt.toml  (via $CPLT_CONFIG)
-  profile.d-agentfence.sh       -> /etc/profile.d/10-agentfence.sh
-  bin/agentfence-shim           -> /opt/agentfence/bin/{copilot,opencode,goose}
-  50-agentfence-user-limits.conf  -> /etc/systemd/system/user-.slice.d/
-  50-agentfence-root-exempt.conf  -> /etc/systemd/system/user-0.slice.d/
-  50-agentfence-audit.rules       -> /etc/audit/rules.d/
-
-templates/                      what `agentfence init` writes out for an admin
-  agentfence.conf.example
-
-tools/                          development only, never shipped
-  build-installer.sh            `make dist`
-  validate.sh                   offline checks, run before every build
-
-pypi/                           the uvx entry point and nothing else
-
-dist/agentfence                 the built installer. Not in git.
+engine/      the code: plan / diff / apply, and the policy renderer
+policy/      the base policy - all of this lands on a node
+templates/   what `agentfence init` writes out
+tools/       build and validate; never shipped
+pypi/        the uvx entry point
+docs/        design notes
 ```
 
-**Terms used throughout:** the *engine* is the installer logic and is the same
-everywhere; the *base policy* is what ships; a *site policy* is an admin's
-`--policy-dir` laid over it; *settings* are the `AGENTFENCE_*` values; the
-*payload* is the base64 tar inside the built installer.
+`engine/` and `policy/` are the source of truth; `dist/agentfence` is a build
+artefact and is never edited by hand. The payload inside it is flat, so the
+names you use in a `--policy-dir` stay stable however this repository is
+rearranged.
 
-`engine/` and `policy/` are the source of truth. The installer carries the
-payload embedded, so editing a policy file and running `make dist` is all there
-is to cutting a new version. Never edit `dist/agentfence`.
+## More
 
-The payload is assembled **flat**, regardless of this layout. Those flat names
-are what an admin types in a `--policy-dir` — `50-agentfence-audit.rules.append`,
-not `policy/50-…` — so the repository can be reorganised without breaking them.
+- [docs/design.md](docs/design.md) — threat model, architecture, what was
+  rejected and why, known limits, and why `pam_slurm_adopt` is not installed
+  here.
+- [AGENTS.md](AGENTS.md) — rules for anyone, human or agent, changing this
+  repository.
 
-## Rollback
+## Licence
 
-```bash
-sudo ./agentfence uninstall --nodes "node01 node02 node03"
-```
-
-It removes every file it installed and reloads systemd and the audit rules.
-bubblewrap and cplt are left installed, since removing packages is not this
-script's business.
-
-## `pam_slurm_adopt` is not installed by this script
-
-Adopting SSH sessions into the user's Slurm allocation is the right control for
-compute nodes, and it is deliberately left out here. Editing `/etc/pam.d/sshd`
-can lock every user, root included, out of a node if Slurm is not already set
-up for it — that is a change to make by hand, on one node, with a root session
-held open, after setting `PrologFlags=contain` in `slurm.conf`.
-
-## Known limits — stated, not hidden
-
-- The `/opt/agentfence/bin` shims are a default, not a boundary. `/usr/bin/copilot`
-  still runs unsandboxed. Deliberate; see the threat model.
-- cplt has no `/etc` config path, so the site policy is delivered by exporting
-  `CPLT_CONFIG=/etc/agentfence/cplt.toml` from `/etc/profile.d`. This reaches every
-  account, not just new ones, and `[deny] paths` merges and tightens
-  unconditionally. A user can still `unset CPLT_CONFIG`; cplt prints an
-  unsuppressable warning naming the file whenever the site policy is active,
-  which makes its absence visible.
-- cplt does not wrap `cursor-server`, and neither does anything else here.
-  Cursor's agent is covered only by Layer A.
-- cplt sanitises the child environment by default, which conflicts with
-  Claude Code's `CLAUDE_CODE_PROCESS_WRAPPER` launcher contract ("dropping
-  inherited variables is not allowed"). That is why Claude Code uses its own
-  sandbox here rather than being routed through cplt. Do not stack them.
-- Layer B1 covers the official client. A user who runs
-  `npx @anthropic-ai/claude-code` from `$HOME` gets a client that still reads
-  `/etc/claude-code/managed-settings.json`, but a modified client would not.
-  Again: threat 2, out of scope.
-- The audit rules are tamper-evidence, not control. Full `execve` logging is
-  in the rules file, commented out, with a volume warning.
+MIT. See [LICENSE](LICENSE).
