@@ -1,4 +1,4 @@
-# The uvx entry point. agentfence is a shell installer; this packaging exists
+# The uvx entry point. AgentFence is a shell installer; this packaging exists
 # only so it can be fetched and run in one command on a throwaway machine.
 #
 # For a production node prefer the release artefact, which can be checksummed
@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentfence"
 version = "0.1.0"
-description = "Guardrails for AI coding agents on shared Linux hosts"
+description = "AgentFence: guardrails for AI coding agents on shared Linux hosts"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }

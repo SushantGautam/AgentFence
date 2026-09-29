@@ -1,4 +1,4 @@
-# agentfence
+# AgentFence
 
 Guardrails for AI coding agents on shared Linux hosts — an HPC cluster, a lab
 server, a jump host, anywhere several people share one machine.
@@ -19,7 +19,7 @@ nothing more — treat a first `apply` as untested, on one node, watched.
 
 Three ways in. The first is the one to use on a node that matters.
 
-**A release artefact, verified before it runs.** `agentfence` runs as root on a
+**A release artefact, verified before it runs.** AgentFence runs as root on a
 machine shared by many people, so download and verification are deliberately
 separate steps from execution:
 

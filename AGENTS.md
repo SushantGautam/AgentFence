@@ -4,11 +4,10 @@ Instructions for AI coding agents working in this repository.
 
 ## What this repository is
 
-Configuration that constrains AI coding agents on shared Linux hosts, written
-for an HPC cluster and meant to suit any multi-user machine.
-It ships no application code beyond a build helper. Every file here lands on a
-shared node as root,
-so a mistake affects everyone with an account at once.
+AgentFence is configuration that constrains AI coding agents on shared Linux
+hosts, written for an HPC cluster and meant to suit any multi-user machine. It
+ships no application code beyond a build helper. Every file here lands on a
+shared node as root, so a mistake affects everyone with an account at once.
 
 Read `README.md` before changing anything. In particular the **Threat model**
 section: this project deliberately does *not* defend against a user who wants
