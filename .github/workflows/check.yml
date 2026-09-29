@@ -28,3 +28,63 @@ jobs:
           if AGENTFENCE_SHARED_HOMES=relative/path ./dist/agentfence --role login; then
             echo "expected a refusal"; exit 1
           fi
+
+  # The runner is a disposable Linux VM with root, so it is the one place
+  # `apply` can actually be exercised. This is the only automated evidence
+  # that the installer converges; a real multi-user node is still untested.
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make dist
+
+      - name: Apply
+        env:
+          AGENTFENCE_SITE_NAME: CI runner
+          AGENTFENCE_SHARED_HOMES: /shared/home
+          AGENTFENCE_SHARED_APPS: /shared/apps
+          AGENTFENCE_SHARED_WORKSPACES: /shared/projects
+        run: sudo -E ./dist/agentfence apply --role login --yes --no-packages
+
+      - name: The policy that landed is valid JSON and carries the site paths
+        run: |
+          sudo cat /etc/claude-code/managed-settings.json | python3 -c '
+          import json, sys
+          s = json.load(sys.stdin)
+          fs = s["sandbox"]["filesystem"]
+          assert "//shared/home" in fs["denyRead"], fs["denyRead"]
+          assert "//shared/apps" in fs["denyWrite"], fs["denyWrite"]
+          assert "//shared/projects" in fs["allowRead"], fs["allowRead"]
+          assert "Read(//shared/home/**/.ssh/**)" in s["permissions"]["deny"]
+          assert s["sandbox"]["failIfUnavailable"] is True
+          print("policy ok")'
+
+      # Applying twice must be a no-op. This is the convergence claim, and it
+      # is also what makes `status` from cron meaningful.
+      - name: Status now reports no drift, without the variables set
+        run: sudo ./dist/agentfence --role login
+
+      - name: Applying again changes nothing
+        run: |
+          out=$(sudo ./dist/agentfence apply --role login --yes --no-packages)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "already matches"
+
+      - name: Drift is detected and repaired
+        run: |
+          echo "tampered" | sudo tee /etc/claude-code/managed-settings.json >/dev/null
+          if sudo ./dist/agentfence --role login; then
+            echo "status should have reported drift"; exit 1
+          fi
+          sudo ./dist/agentfence apply --role login --yes --no-packages
+          sudo ./dist/agentfence --role login
+
+      - name: Uninstall removes what it installed
+        run: |
+          sudo ./dist/agentfence uninstall --role login --yes
+          for f in /etc/claude-code/managed-settings.json \
+                   /etc/agentfence/site.env \
+                   /etc/profile.d/10-agentfence.sh; do
+            if [ -e "$f" ]; then echo "$f survived uninstall"; exit 1; fi
+          done
+          echo "clean"
