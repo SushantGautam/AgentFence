@@ -22,7 +22,7 @@ jobs:
       # Same checks that gate `make dist` locally. A tag that fails them is
       # not published rather than published broken.
       - name: Validate
-        run: ./scripts/validate.sh
+        run: ./tools/validate.sh
 
       - name: Build
         run: make dist

@@ -19,7 +19,7 @@ rejected.
 1. **Never run `git add -A`, `git add .`, or `git commit -a` here.** This
    directory lives inside the user's home-directory git repository. Stage
    explicit paths only.
-2. **Do not widen the deny list in `files/managed-settings.json` without a
+2. **Do not widen the deny list in `policy/managed-settings.json` without a
    stated reason.** Over-blocking is a documented failure mode: users hit the
    wall, install an unmanaged client in `$HOME`, and the policy loses the
    visibility it existed for. The list is 11 entries and should stay short.
@@ -42,7 +42,7 @@ rejected.
 7. **Do not build the policy JSON with `sed`.** Deleting the last element of a
    JSON array leaves a trailing comma, the file stops parsing, and an
    unparseable `managed-settings.json` is ignored *silently* — the node looks
-   configured and enforces nothing. Use `files/render-settings.py`.
+   configured and enforces nothing. Use `engine/render-settings.py`.
 8. **Do not call `die` inside `$(...)`.** It exits only the subshell, so the
    run carries on with an empty value. Fail before the substitution.
 9. **Do not add compute-node resource limits.** Slurm's `cgroup.conf` owns
@@ -52,11 +52,11 @@ rejected.
 
 ## Before you claim a change works
 
-`scripts/validate.sh` must pass. Run it after every edit to
-`files/managed-settings.json` or `scripts/installer-template.sh`:
+`tools/validate.sh` must pass. Run it after every edit to
+`policy/managed-settings.json` or `engine/installer-template.sh`:
 
 ```bash
-./scripts/validate.sh
+./tools/validate.sh
 ```
 
 It catches the four failure modes that produce *silently empty* policy:
@@ -71,7 +71,7 @@ It catches the four failure modes that produce *silently empty* policy:
 
 `validate.sh` also parses the installer template, both shipped shell files
 (POSIX `sh`, not bash) and the TOML, so it covers every file in the repo. It
-additionally runs `files/render-settings.py` with no site paths, with a full
+additionally runs `engine/render-settings.py` with no site paths, with a full
 set, and with input that must be refused — that renderer builds JSON on the
 node, where `validate.sh` never runs, so it is exercised here instead.
 
@@ -84,7 +84,7 @@ run and what was not.
 
 ## Settings-schema changes
 
-`files/managed-settings.json` is validated against
+`policy/managed-settings.json` is validated against
 `https://json.schemastore.org/claude-code-settings.json`. Keys are added and
 renamed over time, and **an unknown key is ignored with no error**, so a typo
 is indistinguishable from a working setting at runtime. Before adding a key,
@@ -98,20 +98,49 @@ curl -sfL https://json.schemastore.org/claude-code-settings.json \
 If a new key requires a newer client, raise `requiredMinimumVersion` in the
 same change, or older clients silently ignore it.
 
+## Vocabulary
+
+Use these words consistently — in docs, comments and error messages.
+
+| Term | Means |
+|---|---|
+| **engine** | The installer logic: plan, diff, apply. Site-independent. `engine/` |
+| **base policy** | The files AgentFence ships that land on a node. `policy/` |
+| **site policy** | An admin's `--policy-dir`, layered over the base policy |
+| **settings** | The `AGENTFENCE_*` values |
+| **site config** | A `--config` file, or `/etc/agentfence/site.env` on a node |
+| **payload** | The base64 tar appended to the installer after `__PAYLOAD__` |
+
+`policy/` here and `--policy-dir` on a node are deliberately the same word:
+one is the base, the other is laid over it.
+
 ## Layout and where a change belongs
+
+```
+engine/      the code: plan/diff/apply, and the policy renderer
+policy/      the base policy - exactly what lands on a node, nothing else
+templates/   what `agentfence init` hands an admin
+tools/       build and validate; never shipped
+pypi/        the uvx entry point only
+```
+
+Nothing but base policy goes in `policy/`. It used to also hold the renderer
+and the settings template, which made "everything here lands on a node" false
+and hid two very different kinds of file among the policy.
+
 
 | Change | File |
 |---|---|
-| Claude Code policy | `files/managed-settings.json` |
-| CPU/RAM/PID caps | `files/50-agentfence-user-limits.conf`, values from settings |
-| A new site setting | `SETTINGS` in `scripts/installer-template.sh`, plus `agentfence.conf.example` and the README table |
+| Claude Code policy | `policy/managed-settings.json` |
+| CPU/RAM/PID caps | `policy/50-agentfence-user-limits.conf`, values from settings |
+| A new site setting | `SETTINGS` in `engine/installer-template.sh`, plus `templates/agentfence.conf.example` and the README table |
 | Which agents get a cplt shim | `AGENTFENCE_SHIM_AGENTS`, a setting |
-| Site-wide cplt policy | `files/cplt-config.toml`, delivered as `$CPLT_CONFIG` |
-| Shim behaviour | `files/bin/agentfence-shim` |
-| Audit rules | `files/50-agentfence-audit.rules` |
-| Installer behaviour | `scripts/installer-template.sh`, built by `make dist` |
-| How site paths enter the policy | `files/render-settings.py` |
-| uvx entry point | `pyproject.toml`, `python/` |
+| Site-wide cplt policy | `policy/cplt-config.toml`, delivered as `$CPLT_CONFIG` |
+| Shim behaviour | `policy/bin/agentfence-shim` |
+| Audit rules | `policy/50-agentfence-audit.rules` |
+| Installer behaviour | `engine/installer-template.sh`, built by `make dist` |
+| How site paths enter the policy | `engine/render-settings.py` |
+| uvx entry point | `pyproject.toml`, `pypi/` |
 | CI and releases | `.github/workflows/` |
 
 No site's real hostnames or filesystem paths belong in this repository. They
@@ -122,10 +151,16 @@ are settings — `AGENTFENCE_SHARED_HOMES`, `AGENTFENCE_SHARED_APPS`,
 
 ## How the installer is put together
 
-`files/` is canonical. `dist/agentfence` is a build artefact produced by
-`make dist`, which embeds `files/` as a base64 payload appended after a
-`__PAYLOAD__` marker. **Never edit `dist/agentfence`** — edit `files/`
-or `scripts/installer-template.sh` and rebuild. `make dist` runs `validate.sh`
+`policy/` and `engine/` are canonical. `dist/agentfence` is a build artefact
+produced by `make dist`, which stages the payload and appends it base64-encoded
+after a `__PAYLOAD__` marker. **Never edit `dist/agentfence`** — edit the
+source and rebuild.
+
+The payload is assembled **flat**, whatever the repository layout is. Those
+flat names are a public interface: a site override is
+`50-agentfence-audit.rules.append`, never `policy/50-…`. Reorganising the
+repository must not change what an admin types, so if you move something in
+`policy/`, keep its basename. `make dist` runs `validate.sh`
 first and refuses to build if it fails.
 
 The installer is convergent, in three steps that share one data structure:

@@ -23,12 +23,13 @@ Homepage = "https://github.com/SushantGautam/AgentFence"
 agentfence = "agentfence.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/agentfence"]
+packages = ["pypi/agentfence"]
 
-# Builds dist/agentfence from files/ and drops it inside the wheel, so the
+# Builds dist/agentfence from the policy and engine sources and drops it
+# inside the wheel, so the
 # wheel and the release artefact are the same bytes from the same source.
 [tool.hatch.build.targets.wheel.hooks.custom]
-path = "python/hatch_build.py"
+path = "pypi/hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["python", "files", "scripts", "Makefile", "README.md", "AGENTS.md", "LICENSE"]
+include = ["pypi", "engine", "policy", "templates", "tools", "Makefile", "README.md", "AGENTS.md", "LICENSE"]

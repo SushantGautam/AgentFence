@@ -4,10 +4,10 @@ help:
 	@grep -E '^[a-z-]+:.*?## ' Makefile | sed 's/:.*## /\t/'
 
 check:   ## validate the config files, no cluster access needed
-	@./scripts/validate.sh
+	@./tools/validate.sh
 
 dist: check  ## build the installer at dist/agentfence
-	@./scripts/build-installer.sh
+	@./tools/build-installer.sh
 
 wheel:  ## build the uvx-installable wheel
 	@uv build --wheel

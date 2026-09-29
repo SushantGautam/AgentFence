@@ -7,7 +7,7 @@ note() { printf '  %s\n' "$*"; }
 ok()   { printf 'OK   %s\n' "$*"; }
 bad()  { printf 'FAIL %s\n' "$*"; fail=1; }
 
-f=files/managed-settings.json
+f=policy/managed-settings.json
 
 # 1. Valid JSON. JSON has no comments; a '#' comment silently kills the whole
 #    policy and Claude Code falls back to defaults with no warning.
@@ -52,22 +52,22 @@ sys.exit(1 if bad else 0)
 PY
 
 # 5. The installer must at least parse.
-bash -n scripts/installer-template.sh 2>/dev/null \
+bash -n engine/installer-template.sh 2>/dev/null \
   && ok "installer template parses" || bad "installer template has a syntax error"
 
-for shipped in files/bin/agentfence-shim files/profile.d-agentfence.sh; do
+for shipped in policy/bin/agentfence-shim policy/profile.d-agentfence.sh; do
   sh -n "$shipped" 2>/dev/null && ok "$shipped parses" || bad "$shipped has a syntax error"
 done
 
-python3 -c "import tomllib;tomllib.load(open('files/cplt-config.toml','rb'))" 2>/dev/null \
-  && ok "files/cplt-config.toml parses as TOML" || bad "files/cplt-config.toml is not valid TOML"
+python3 -c "import tomllib;tomllib.load(open('policy/cplt-config.toml','rb'))" 2>/dev/null \
+  && ok "policy/cplt-config.toml parses as TOML" || bad "policy/cplt-config.toml is not valid TOML"
 
 # 6. The site-path renderer. This is the one step that builds JSON at install
 #    time on a node, where validate.sh never runs, so it is exercised here
 #    with the cases that would produce a silently empty policy: no site paths
 #    at all, a full set, and input that must be refused outright.
-r=files/render-settings.py
-settings=files/managed-settings.json
+r=engine/render-settings.py
+settings=policy/managed-settings.json
 
 if env -u AGENTFENCE_SHARED_HOMES -u AGENTFENCE_SHARED_APPS \
        -u AGENTFENCE_SHARED_WORKSPACES -u AGENTFENCE_SITE_NAME \
@@ -109,5 +109,56 @@ for bogus in "relative/path" "/" "/has/*/wildcard" "/has/../dots"; do
     ok "renderer refuses $bogus"
   fi
 done
+
+# 7. The site overlay. A site can add to the policy but must not be able to
+#    quietly remove a shipped rule or switch the sandbox off - both would
+#    leave a node that looks configured and enforces less than it claims.
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+printf '%s' '{"permissions":{"deny":["Bash(docker *)"]}}' > "$tmp/add.json"
+merged=$(python3 "$r" "$settings" "$tmp/add.json" 2>/dev/null) || merged=""
+if printf '%s' "$merged" | python3 -c '
+import json,sys
+d = json.load(sys.stdin)["permissions"]["deny"]
+sys.exit(0 if "Bash(docker *)" in d and "Bash(sudo *)" in d else 1)' 2>/dev/null; then
+  ok "an overlay adds a rule and keeps the shipped ones"
+else
+  bad "overlay merge lost a shipped rule or did not add the new one"
+fi
+
+# Omitting a rule must not drop it: removal has to be an explicit file
+# replacement, not a silent consequence of writing a short overlay.
+printf '%s' '{"permissions":{"deny":["Bash(docker *)"]}}' > "$tmp/short.json"
+if python3 "$r" "$settings" "$tmp/short.json" 2>/dev/null \
+   | grep -q 'Bash(sudo \*)'; then
+  ok "an overlay cannot drop a shipped rule by omitting it"
+else
+  bad "an overlay dropped a shipped rule by omission"
+fi
+
+for bad_overlay in \
+  '{"sandbox":{"failIfUnavailable":false}}' \
+  '{"sandbox":{"enabled":false}}' \
+  '{"sandbox":{"allowUnsandboxedCommands":true}}' \
+  '{"allowManagedPermissionRulesOnly":false}' \
+  '{"permissions":{"disableBypassPermissionsMode":"allow"}}'
+do
+  printf '%s' "$bad_overlay" > "$tmp/bad.json"
+  if python3 "$r" "$settings" "$tmp/bad.json" >/dev/null 2>&1; then
+    bad "overlay was allowed to weaken enforcement: $bad_overlay"
+  else
+    ok "overlay refused: $bad_overlay"
+  fi
+done
+
+# 8. Config parsing. The shipped example has inline comments; a value that
+#    keeps its comment reaches systemd as garbage and the cap is silently not
+#    applied, which looks exactly like a working install.
+ex=templates/agentfence.conf.example
+if grep -qE '^\s*AGENTFENCE_[A-Z_]+="[^"]*"\s+#' "$ex"; then
+  ok "$ex still exercises the inline-comment case"
+else
+  note "$ex no longer has an inline comment after a quoted value"
+fi
 
 exit $fail

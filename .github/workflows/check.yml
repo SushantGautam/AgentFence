@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: ./scripts/validate.sh
+      - run: ./tools/validate.sh
       - run: make dist
       # The installer must at least run far enough to render the policy and
       # build a plan. It is not applied here; nothing is changed on the runner.
@@ -38,10 +38,55 @@ jobs:
           printf '%s' "$out" | grep -q "ignoring unknown setting"
           printf '%s' "$out" | grep -q "bin/aider"
 
-      - name: A missing --config file is an error, not a silent default
+      - name: config reports each value and where it came from
+        run: |
+          out=$(AGENTFENCE_MEMORY_MAX=64G ./dist/agentfence config --config /tmp/t.conf)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -qE 'AGENTFENCE_MEMORY_MAX +64G +environment'
+          printf '%s' "$out" | grep -qE 'AGENTFENCE_SHARED_HOMES .*/tmp/t.conf'
+          printf '%s' "$out" | grep -qE 'AGENTFENCE_CPU_QUOTA +400% +default'
+
+      - name: init scaffolds, is not destructive, and round-trips
+        run: |
+          ./dist/agentfence init --config ./site.conf --policy-dir ./policy
+          test -f ./site.conf
+          test -f ./policy/managed-settings.overlay.json
+          test -f ./policy/README
+          test -f ./policy/managed-settings.json.shipped
+
+          # An inline comment after a quoted value must not reach the value.
+          # If it does, the cap lands in the systemd drop-in as garbage and is
+          # silently not applied.
+          sed -i 's|AGENTFENCE_MEMORY_MAX="16G"|AGENTFENCE_MEMORY_MAX="48G"|' ./site.conf
+          out=$(./dist/agentfence config --config ./site.conf)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -qE 'AGENTFENCE_MEMORY_MAX +48G +\./site\.conf'
+
+          # Re-running must not overwrite an edited file.
+          ./dist/agentfence init --config ./site.conf --policy-dir ./policy
+          grep -q '48G' ./site.conf
+
+      - name: A policy overlay reaches the installed file
+        run: |
+          printf '%s' '{"permissions":{"deny":["Bash(docker *)"]}}' \
+            > ./policy/managed-settings.overlay.json
+          printf -- '-w /srv/secrets -p rwa -k site-secrets\n' \
+            > ./policy/50-agentfence-audit.rules.append
+          sudo ./dist/agentfence apply --role login --yes --no-packages \
+            --config ./site.conf --policy-dir ./policy
+          sudo grep -q 'Bash(docker \*)' /etc/claude-code/managed-settings.json
+          sudo grep -q 'Bash(sudo \*)'   /etc/claude-code/managed-settings.json
+          sudo grep -q 'site-secrets'     /etc/audit/rules.d/50-agentfence-audit.rules
+          sudo grep -q 'agentfence-config' /etc/audit/rules.d/50-agentfence-audit.rules
+          sudo ./dist/agentfence uninstall --role login --yes
+
+      - name: A missing --config or --policy-dir is an error, not a default
         run: |
           if ./dist/agentfence --role login --config /nope/missing.conf; then
-            echo "expected a refusal"; exit 1
+            echo "expected a refusal for --config"; exit 1
+          fi
+          if ./dist/agentfence --role login --policy-dir /nope/missing; then
+            echo "expected a refusal for --policy-dir"; exit 1
           fi
 
       - name: A bad site path is refused

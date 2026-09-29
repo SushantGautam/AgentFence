@@ -6,9 +6,12 @@
 #
 #   ./agentfence              what is on this node vs what should be
 #   ./agentfence apply        make the node match. Asks first.
+#   ./agentfence init         write the defaults out so you can edit them
+#   ./agentfence config       the settings a run would use, and where from
 #   ./agentfence uninstall    remove everything it installed
 #
 #   --config FILE   site settings; see "Settings" in README.md
+#   --policy-dir DIR  site policy laid over the shipped one
 #   --yes           do not ask
 #   --role login|compute|auto        default auto
 #   --nodes "a b c" do the same on those hosts over ssh
@@ -26,7 +29,7 @@ BUILT="@@BUILT@@"
 
 readonly E_OK=0 E_DRIFT=1 E_FAIL=2
 
-ACTION=status ROLE=auto ASSUME_YES=0 DO_PACKAGES=1 NODES="" CONFIG_FILE=""
+ACTION=status ROLE=auto ASSUME_YES=0 DO_PACKAGES=1 NODES="" CONFIG_FILE="" POLICY_DIR_ARG=""
 WORK="" FAILED=0
 
 # --------------------------------------------------------------------- output
@@ -48,8 +51,9 @@ trap '[ -n "$WORK" ] && rm -rf "$WORK"' EXIT
 # ----------------------------------------------------------------------- args
 while [ $# -gt 0 ]; do
     case "$1" in
-        status|apply|uninstall) ACTION="$1" ;;
+        status|apply|uninstall|config|init) ACTION="$1" ;;
         --config)      CONFIG_FILE="${2:?--config needs a file}"; shift ;;
+        --policy-dir)  POLICY_DIR_ARG="${2:?--policy-dir needs a directory}"; shift ;;
         --role)        ROLE="${2:?--role needs a value}"; shift ;;
         --nodes)       NODES="${2:?--nodes needs a value}"; shift ;;
         --yes|-y)      ASSUME_YES=1 ;;
@@ -74,11 +78,16 @@ if [ -n "$NODES" ]; then
         if [ -n "$CONFIG_FILE" ] && ! scp -q "$CONFIG_FILE" "$host:/tmp/agentfence.conf"; then
             problem "$host: could not copy the config file"; rc=$E_FAIL; continue
         fi
+        if [ -n "$POLICY_DIR_ARG" ] \
+           && ! scp -qr "$POLICY_DIR_ARG" "$host:/tmp/agentfence-policy"; then
+            problem "$host: could not copy the policy directory"; rc=$E_FAIL; continue
+        fi
         ssh -t "$host" "sudo bash /tmp/agentfence $ACTION --role $ROLE \
             $([ -n "$CONFIG_FILE" ] && echo --config /tmp/agentfence.conf) \
+            $([ -n "$POLICY_DIR_ARG" ] && echo --policy-dir /tmp/agentfence-policy) \
             $([ "$ASSUME_YES" = 1 ] && echo --yes) \
             $([ "$DO_PACKAGES" = 0 ] && echo --no-packages); \
-            s=\$?; rm -f /tmp/agentfence /tmp/agentfence.conf; exit \$s"
+            s=\$?; rm -rf /tmp/agentfence /tmp/agentfence.conf /tmp/agentfence-policy; exit \$s"
         case "$?" in 0) ;; 1) [ "$rc" = "$E_OK" ] && rc=$E_DRIFT ;; *) rc=$E_FAIL ;; esac
     done
     exit $rc
@@ -106,7 +115,29 @@ awk 'f{print} /^__PAYLOAD__$/{f=1}' "$0" | base64 -d | tar -xz -C "$WORK" \
 # exit code would be worthless.
 SETTINGS="AGENTFENCE_SITE_NAME AGENTFENCE_SHARED_HOMES AGENTFENCE_SHARED_APPS \
 AGENTFENCE_SHARED_WORKSPACES AGENTFENCE_MEMORY_HIGH AGENTFENCE_MEMORY_MAX \
-AGENTFENCE_CPU_QUOTA AGENTFENCE_TASKS_MAX AGENTFENCE_SHIM_AGENTS"
+AGENTFENCE_CPU_QUOTA AGENTFENCE_TASKS_MAX AGENTFENCE_SHIM_AGENTS \
+AGENTFENCE_POLICY_DIR"
+
+# Which layer each value came from, so `agentfence config` can show it. A
+# setting that is not doing what an admin expects is nearly always one that
+# was set somewhere else, and this is the only way to see that without
+# guessing.
+ORIGINS=""
+set_origin() { ORIGINS="$ORIGINS$1=$2
+"; }
+origin_of() {
+    local line
+    while IFS= read -r line; do
+        case "$line" in "$1="*) printf '%s' "${line#*=}"; return ;; esac
+    done <<< "$ORIGINS"
+    printf 'default'
+}
+
+# Anything already exported when we start came from the environment. Recorded
+# before any file is read, because reading one overwrites the evidence.
+for k in $SETTINGS; do
+    [ -n "${!k:-}" ] && set_origin "$k" "environment"
+done
 
 # KEY=value only, and only keys we know. Never `source` a file as root: that
 # would execute whatever is in it.
@@ -115,16 +146,26 @@ AGENTFENCE_CPU_QUOTA AGENTFENCE_TASKS_MAX AGENTFENCE_SHIM_AGENTS"
 load_config() {
     local file="$1" required="$2" mode="$3" key value known
     if [ ! -r "$file" ]; then
-        [ "$required" = required ] && die "cannot read the config file: $file"
+        [ "$required" = required ] \
+            && die "cannot read the config file: $file (create one with: agentfence init --config $file)"
         return 0
     fi
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|\#*) continue ;; esac
         key="${line%%=*}"; value="${line#*=}"
-        key="${key%"${key##*[! ]}"}"          # trim trailing spaces
-        value="${value#"${value%%[! ]*}"}"    # trim leading spaces
-        value="${value%\"}"; value="${value#\"}"
-        value="${value%\'}"; value="${value#\'}"
+        key="${key%"${key##*[![:space:]]}"}"        # trim trailing space
+        key="${key#"${key%%[![:space:]]*}"}"        # trim leading space
+        value="${value#"${value%%[![:space:]]*}"}"  # trim leading space
+        # A quoted value ends at its closing quote; anything after it is a
+        # comment. The shipped example has inline comments, and without this a
+        # cap parses as `16G"  # hard: ...`, which systemd rejects - leaving
+        # the node with no cap at all and nothing saying so.
+        case "$value" in
+            \"*) value="${value#\"}"; value="${value%%\"*}" ;;
+            \'*) value="${value#\'}"; value="${value%%\'*}" ;;
+            *)   value="${value%%[[:space:]]#*}"
+                 value="${value%"${value##*[![:space:]]}"}" ;;
+        esac
         known=0
         for k in $SETTINGS; do [ "$k" = "$key" ] && known=1; done
         if [ "$known" = 0 ]; then
@@ -133,11 +174,12 @@ load_config() {
         fi
         if [ "$mode" = override ] || [ -z "${!key:-}" ]; then
             export "$key=$value"
+            set_origin "$key" "$file"
         fi
     done < "$file"
 }
 
-[ -n "$CONFIG_FILE" ] && load_config "$CONFIG_FILE" required override
+[ -n "$CONFIG_FILE" ] && [ "$ACTION" != init ] && load_config "$CONFIG_FILE" required override
 load_config /etc/agentfence/site.env optional fill
 
 export AGENTFENCE_SHARED_HOMES="${AGENTFENCE_SHARED_HOMES:-}"
@@ -149,6 +191,42 @@ export AGENTFENCE_MEMORY_MAX="${AGENTFENCE_MEMORY_MAX:-16G}"
 export AGENTFENCE_CPU_QUOTA="${AGENTFENCE_CPU_QUOTA:-400%}"
 export AGENTFENCE_TASKS_MAX="${AGENTFENCE_TASKS_MAX:-4096}"
 export AGENTFENCE_SHIM_AGENTS="${AGENTFENCE_SHIM_AGENTS:-copilot opencode goose}"
+export AGENTFENCE_POLICY_DIR="${AGENTFENCE_POLICY_DIR:-}"
+
+# The flag is just the highest layer of the same setting.
+if [ -n "$POLICY_DIR_ARG" ]; then
+    export AGENTFENCE_POLICY_DIR="$POLICY_DIR_ARG"
+    set_origin AGENTFENCE_POLICY_DIR "--policy-dir"
+fi
+POLICY_DIR="$AGENTFENCE_POLICY_DIR"
+if [ -n "$POLICY_DIR" ] && [ "$ACTION" != init ]; then
+    [ -d "$POLICY_DIR" ] \
+        || die "policy directory not found: $POLICY_DIR (create one with: agentfence init --policy-dir $POLICY_DIR)"
+    POLICY_DIR="$(cd "$POLICY_DIR" && pwd)"
+fi
+[ "$ACTION" = init ] && POLICY_DIR=""
+
+# The shipped payload is the base policy; a site directory sits on top of it.
+# A file named after a payload file replaces that file outright; the overlay
+# JSON is merged into the shipped policy instead. Everything the installer
+# reads goes through here, so there is one place that decides which wins.
+policy_file() {
+    if [ -n "$POLICY_DIR" ] && [ -f "$POLICY_DIR/$1" ]; then
+        printf '%s' "$POLICY_DIR/$1"
+    else
+        printf '%s' "$WORK/$1"
+    fi
+}
+policy_source() {
+    if [ -n "$POLICY_DIR" ] && [ -f "$POLICY_DIR/$1" ]; then
+        printf 'site'
+    else
+        printf 'shipped'
+    fi
+}
+OVERLAY=""
+[ -n "$POLICY_DIR" ] && [ -f "$POLICY_DIR/managed-settings.overlay.json" ] \
+    && OVERLAY="$POLICY_DIR/managed-settings.overlay.json"
 
 # Written back out so the next run, by anyone, sees the same settings. It is
 # also a valid --config file, so a node can be copied to another node.
@@ -165,9 +243,9 @@ export AGENTFENCE_SHIM_AGENTS="${AGENTFENCE_SHIM_AGENTS:-copilot opencode goose}
 
 # Fail before anything is printed or planned: a site path that cannot be used
 # makes every later check meaningless.
-python3 "$WORK/render-settings.py" "$WORK/managed-settings.json" \
+python3 "$WORK/render-settings.py" "$(policy_file managed-settings.json)" $OVERLAY \
     > "$WORK/settings.rendered" \
-    || die "check the AGENTFENCE_SHARED_* paths above; nothing was changed"
+    || die "check the policy and AGENTFENCE_SHARED_* paths above; nothing was changed"
 
 # ----------------------------------------------------------------------- node
 detect_role() {
@@ -221,6 +299,21 @@ bin/agentfence-shim:/opt/agentfence/bin/agentfence-shim:0755:login,compute:alway
 "
 SHIM_TARGET=/opt/agentfence/bin/agentfence-shim
 
+# A site directory may add files of its own. They are appended as ordinary
+# rows, so they appear in the plan and are applied, reported and removed by
+# exactly the same code as everything else - no second path to audit.
+if [ -n "$POLICY_DIR" ] && [ -f "$POLICY_DIR/desired-state" ]; then
+    while IFS=: read -r src dst mode roles condition; do
+        case "$src" in ''|\#*) continue ;; esac
+        [ -f "$POLICY_DIR/$src" ] || die "desired-state names a missing file: $src"
+        case "$dst" in /*) ;; *) die "desired-state: destination must be absolute: $dst" ;; esac
+        case "$mode" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;;
+            *) die "desired-state: mode must be octal, got: $mode" ;; esac
+        DESIRED_STATE="$DESIRED_STATE$src:$dst:$mode:${roles:-login,compute}:${condition:-always}
+"
+    done < "$POLICY_DIR/desired-state"
+fi
+
 always()             { return 0; }
 no_existing_limiter() { [ -z "$EXISTING_LIMITER" ]; }
 wanted_on_role()      { case ",$1," in *",$ROLE,"*) return 0 ;; *) return 1 ;; esac; }
@@ -228,8 +321,17 @@ wanted_on_role()      { case ",$1," in *",$ROLE,"*) return 0 ;; *) return 1 ;; e
 # Per-site values come from the environment rather than from editing the
 # payload. One rendered file per source - a single shared temporary name would
 # have two templated files overwrite each other.
+# A site directory can do three things to a shipped file:
+#   <name>                    replace it outright
+#   <name>.append             add lines to the end of it
+#   managed-settings.overlay.json   merge into the policy (JSON only)
+# Append is the one an admin usually wants for the line-based files: adding an
+# audit rule should not mean restating the rules that ship, which would then
+# never pick up a later change to them.
 render() {
-    local source="$WORK/$1" rendered="$WORK/.rendered.${1//\//_}"
+    local source rendered="$WORK/.rendered.${1//\//_}" appended
+    source="$(policy_file "$1")"
+    appended="$POLICY_DIR/$1.append"
     case "$1" in
         managed-settings.json)
             # Built once at startup. Rendering here instead would put `die`
@@ -245,10 +347,16 @@ render() {
                     -e "s|{{ cpu_quota }}|$AGENTFENCE_CPU_QUOTA|g" \
                     -e "s|{{ tasks_max }}|$AGENTFENCE_TASKS_MAX|g" \
                     "$source" > "$rendered"
-                printf '%s' "$rendered"
+            elif [ -n "$POLICY_DIR" ] && [ -f "$appended" ]; then
+                cat "$source" > "$rendered"
             else
-                printf '%s' "$source"
-            fi ;;
+                printf '%s' "$source"; return
+            fi
+            if [ -n "$POLICY_DIR" ] && [ -f "$appended" ]; then
+                printf '\n# --- added by the site policy directory ---\n' >> "$rendered"
+                cat "$appended" >> "$rendered"
+            fi
+            printf '%s' "$rendered" ;;
     esac
 }
 digest() { [ -f "$1" ] && sha256sum "$1" | cut -d' ' -f1 || echo absent; }
@@ -324,6 +432,11 @@ preflight() {
         && problem "a path rule starts with a single slash; that means 'next to the settings file', not '/'" \
         || same "path rules are absolute"
 
+    if [ -n "$POLICY_DIR" ]; then
+        note "policy comes from $POLICY_DIR, not only the shipped payload"
+        [ -n "$OVERLAY" ] && note "an overlay is merged in; run 'agentfence config' to see what"
+    fi
+
     if [ -z "$AGENTFENCE_SHARED_HOMES" ]; then
         note "no shared home filesystem set; only /home is protected (AGENTFENCE_SHARED_HOMES)"
     else
@@ -380,6 +493,144 @@ preflight() {
             *)        same "your session is capped at $cap" ;;
         esac
     fi
+}
+
+# --------------------------------------------------------------------- config
+# Prints the settings that a run would actually use, and where each one came
+# from. Reads nothing but the config layers, changes nothing, needs no root.
+print_config() {
+    heading "Settings ($(hostname -s))"
+    local key value origin width=0
+    for key in $SETTINGS; do
+        [ ${#key} -gt $width ] && width=${#key}
+    done
+    for key in $SETTINGS; do
+        value="${!key}"
+        origin="$(origin_of "$key")"
+        [ -z "$value" ] && value="(unset)"
+        printf '  %-*s  %-28s %s%s%s\n' "$width" "$key" "$value" "$C_OK" "$origin" "$C_0"
+    done
+    say ""
+    say "Precedence, highest first: --config, the environment,"
+    say "/etc/agentfence/site.env, the built-in defaults."
+
+    heading "Policy"
+    if [ -z "$POLICY_DIR" ]; then
+        same "shipped policy only (no --policy-dir)"
+    else
+        say "  site directory: $POLICY_DIR"
+        local f
+        while IFS=: read -r f _ _ _ _; do
+            [ -z "$f" ] && continue
+            [ "$f" = site.env ] && continue
+            if [ "$(policy_source "$f")" = site ]; then
+                change "$f  replaced by the site copy"
+            elif [ -f "$POLICY_DIR/$f.append" ]; then
+                change "$f  shipped, with $f.append added to it"
+            else
+                same "$f  shipped"
+            fi
+        done <<< "$DESIRED_STATE"
+        [ -n "$OVERLAY" ] \
+            && change "managed-settings.overlay.json  merged into the shipped policy" \
+            || same "no overlay"
+    fi
+    if [ -z "$AGENTFENCE_SHARED_HOMES" ]; then
+        say ""
+        note "AGENTFENCE_SHARED_HOMES is unset: only /home is treated as other"
+        note "people's homes. If this site keeps them elsewhere, set it."
+    fi
+}
+
+# ------------------------------------------------------------------------ init
+# Writes the shipped defaults out so an admin has something to edit. This is
+# the only way to get a starting point without a source checkout.
+#
+# It never overwrites: an existing file is left alone and reported. `apply`
+# still refuses a --config or --policy-dir that does not exist, because a
+# typo in a filename must not quietly become "use the defaults" - that would
+# install a weaker policy than the admin believes they asked for.
+write_scaffold() {
+    local src="$1" dst="$2"
+    if [ -e "$dst" ]; then
+        same "kept     $dst  (already exists)"
+        return 0
+    fi
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst" && change "wrote    $dst" || problem "could not write $dst"
+}
+
+do_init() {
+    [ -n "$CONFIG_FILE" ] || [ -n "$POLICY_DIR_ARG" ] \
+        || die "init needs --config FILE, --policy-dir DIR, or both"
+
+    heading "Init"
+
+    if [ -n "$CONFIG_FILE" ]; then
+        write_scaffold "$WORK/agentfence.conf.example" "$CONFIG_FILE"
+    fi
+
+    if [ -n "$POLICY_DIR_ARG" ]; then
+        mkdir -p "$POLICY_DIR_ARG"
+        local f
+        # Every shipped policy file, so an admin can see what they are
+        # overriding before they override it.
+        while IFS=: read -r f _ _ _ _; do
+            case "$f" in ''|site.env) continue ;; esac
+            write_scaffold "$WORK/$f" "$POLICY_DIR_ARG/$f.shipped"
+        done <<< "$DESIRED_STATE"
+
+        if [ ! -e "$POLICY_DIR_ARG/managed-settings.overlay.json" ]; then
+            cat > "$POLICY_DIR_ARG/managed-settings.overlay.json" <<'OVERLAY'
+{
+  "permissions": {
+    "deny": []
+  }
+}
+OVERLAY
+            change "wrote    $POLICY_DIR_ARG/managed-settings.overlay.json"
+        else
+            same "kept     $POLICY_DIR_ARG/managed-settings.overlay.json  (already exists)"
+        fi
+
+        if [ ! -e "$POLICY_DIR_ARG/README" ]; then
+            cat > "$POLICY_DIR_ARG/README" <<'SITEREADME'
+Site policy for agentfence.
+
+  agentfence apply --policy-dir THIS_DIRECTORY
+
+The *.shipped files are copies of what agentfence installs by default. They
+are reference only and are not read - delete them if you like. To change
+something, create a file next to them:
+
+  <name>                          replaces the shipped file outright
+  <name>.append                   adds lines to the end of the shipped file
+  managed-settings.overlay.json   merged into the Claude Code policy
+  desired-state                   extra files of your own, one per line:
+                                    src:/absolute/dest:0644:login,compute:always
+
+Prefer .append and the overlay over replacing. A replaced file stops picking
+up later changes to the shipped one, including fixes.
+
+An overlay can add but not remove: lists are appended to, so it cannot drop a
+shipped rule by leaving it out. It also cannot switch off the sandbox or
+re-enable permission bypass - those are refused before anything is written.
+
+See what any of it does, changing nothing:
+
+  agentfence config --policy-dir THIS_DIRECTORY
+SITEREADME
+            change "wrote    $POLICY_DIR_ARG/README"
+        else
+            same "kept     $POLICY_DIR_ARG/README  (already exists)"
+        fi
+    fi
+
+    say ""
+    say "Edit those, then check with:"
+    [ -n "$POLICY_DIR_ARG" ] \
+        && say "  agentfence config --policy-dir $POLICY_DIR_ARG" \
+        || say "  agentfence config --config $CONFIG_FILE"
 }
 
 # ---------------------------------------------------------------------- apply
@@ -467,6 +718,14 @@ remove_everything() {
 
 # ------------------------------------------------------------------------ run
 case "$ACTION" in
+    init)
+        do_init
+        exit "$([ "$FAILED" = 1 ] && echo $E_FAIL || echo $E_OK)" ;;
+
+    config)
+        print_config
+        exit $E_OK ;;
+
     status)
         preflight; build_plan; print_plan
         say ""

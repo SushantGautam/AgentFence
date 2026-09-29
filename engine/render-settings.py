@@ -40,6 +40,59 @@ def paths(var):
     return out
 
 
+def merge(base, overlay, where=""):
+    """Fold a site overlay into the shipped policy.
+
+    Lists are added to, not replaced: a site can append a deny rule without
+    restating the eleven that ship, and cannot drop one by omission. Removing
+    something that ships requires replacing the whole file in the policy
+    directory, which is a deliberate and visible act rather than a quiet
+    side effect of an overlay.
+    """
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        out = dict(base)
+        for k, v in overlay.items():
+            out[k] = merge(base[k], v, "%s.%s" % (where, k)) if k in base else v
+        return out
+    if isinstance(base, list) and isinstance(overlay, list):
+        out = list(base)
+        for item in overlay:
+            if item not in out:
+                out.append(item)
+        return out
+    if isinstance(base, (dict, list)) != isinstance(overlay, (dict, list)):
+        raise BadPath("overlay%s: cannot merge %s into %s"
+                      % (where, type(overlay).__name__, type(base).__name__))
+    return overlay
+
+
+# The settings this configuration exists to guarantee. A site overlay may add
+# to the policy; it may not quietly switch off the enforcement, because a file
+# that looks configured and enforces nothing is the failure this whole
+# repository is built to avoid.
+INVARIANTS = {
+    ("sandbox", "enabled"): True,
+    ("sandbox", "failIfUnavailable"): True,
+    ("sandbox", "allowUnsandboxedCommands"): False,
+    ("allowManagedPermissionRulesOnly",): True,
+    ("permissions", "disableBypassPermissionsMode"): "disable",
+}
+
+
+def check_invariants(s):
+    for path, want in INVARIANTS.items():
+        node = s
+        for key in path:
+            if not isinstance(node, dict) or key not in node:
+                node = None
+                break
+            node = node[key]
+        if node != want:
+            raise BadPath(
+                "the overlay sets %s to %r; it must stay %r"
+                % (".".join(path), node, want))
+
+
 def rule(p):
     """Claude Code reads a single leading slash as 'relative to the settings
     file', so an absolute path has to be written with two."""
@@ -47,9 +100,21 @@ def rule(p):
 
 
 def main():
-    base, = sys.argv[1:]
+    args = sys.argv[1:]
+    if not 1 <= len(args) <= 2:
+        raise BadPath("usage: render-settings.py BASE.json [OVERLAY.json]")
+    base = args[0]
     with open(base) as fh:
         s = json.load(fh)
+
+    if len(args) == 2:
+        with open(args[1]) as fh:
+            try:
+                overlay = json.load(fh)
+            except ValueError as e:
+                raise BadPath("%s is not valid JSON: %s" % (args[1], e))
+        s = merge(s, overlay)
+        check_invariants(s)
 
     homes = paths("AGENTFENCE_SHARED_HOMES")
     apps = paths("AGENTFENCE_SHARED_APPS")

@@ -86,11 +86,13 @@ differs per machine, and there is no sensible default, so these are settings
 rather than constants baked into the payload.
 
 One set of names, three ways to supply them. A config file is the one to use
-for more than a single node:
+for more than a single node. `init` writes you a starting point — no source
+checkout needed, just the binary:
 
 ```bash
-cp agentfence.conf.example agentfence.conf    # edit it
-sudo ./agentfence apply --config ./agentfence.conf
+./agentfence init --config ./site.conf     # writes a commented template
+$EDITOR ./site.conf
+sudo ./agentfence apply --config ./site.conf
 ```
 
 The file is `KEY=value`, `#` comments allowed. It is never sourced as a
@@ -114,6 +116,21 @@ AGENTFENCE_SHARED_HOMES="/shared/home" sudo -E ./agentfence apply
 `/etc/agentfence/site.env`, then the defaults. A `--config` file that cannot
 be read is an error — it will not quietly fall back to defaults and install a
 weaker policy than you asked for.
+
+To see what a run would actually use, and which layer each value came from:
+
+```console
+$ agentfence config
+Settings (login1)
+  AGENTFENCE_SITE_NAME          Physics cluster            ./agentfence.conf
+  AGENTFENCE_SHARED_HOMES       /shared/home               ./agentfence.conf
+  AGENTFENCE_MEMORY_MAX         64G                        environment
+  AGENTFENCE_CPU_QUOTA          400%                       default
+  ...
+```
+
+It reads nothing else, changes nothing, and needs no root. A setting that is
+not doing what you expect is nearly always one that is set somewhere else.
 
 | Variable | What it does | Default |
 |---|---|---|
@@ -153,6 +170,81 @@ the node matches and 1 if it does not:
 ```bash
 agentfence --nodes "$(cat nodes.txt)" || mail -s "agent policy drift" you@example.org
 ```
+
+## Changing the policy
+
+The deny list, sandbox rules and audit rules ship in the payload. An admin does
+**not** edit this repository or rebuild anything to change them — point at a
+directory of your own instead:
+
+```bash
+./agentfence init --policy-dir ./policy      # writes the shipped files + a README
+$EDITOR ./policy/...
+sudo ./agentfence apply --policy-dir ./policy --config ./site.conf
+```
+
+`init` drops every shipped file in as `<name>.shipped` for reference, plus an
+empty overlay and a README. Nothing there is read until you create a real file
+next to it:
+
+| To | Create | Effect |
+|---|---|---|
+| Add audit rules, `PATH` lines, anything line-based | `50-agentfence-audit.rules.append` | Shipped content kept, yours appended |
+| Add Claude Code rules | `managed-settings.overlay.json` | Merged into the shipped policy |
+| Replace a file outright | `50-agentfence-audit.rules` | Yours wins; the shipped one is ignored |
+| Install extra files of your own | `desired-state` | `src:/abs/dest:0644:login,compute:always` per line |
+
+Prefer `.append` and the overlay. **A replaced file stops tracking the shipped
+one**, including later fixes to it.
+
+Two limits on overlays, both deliberate:
+
+- **They add, they do not subtract.** Lists are appended to, so leaving a
+  shipped rule out of your overlay does not remove it. Removing something
+  requires replacing the whole file — a visible act, not a side effect of a
+  short overlay.
+- **They cannot switch off enforcement.** `sandbox.enabled`,
+  `failIfUnavailable`, `allowUnsandboxedCommands`,
+  `allowManagedPermissionRulesOnly` and `disableBypassPermissionsMode` are
+  refused before anything is written:
+
+  ```
+  agentfence: the overlay sets sandbox.failIfUnavailable to False; it must stay True
+  ```
+
+To see exactly which files are shipped, replaced, appended to or merged,
+changing nothing:
+
+```bash
+agentfence config --policy-dir ./policy --config ./site.conf
+```
+
+A `--config` or `--policy-dir` that does not exist is an **error**, never a
+silent fall back to defaults — a typo in a filename must not quietly install a
+weaker policy than you asked for. `init` is how you create them.
+
+### What ships, and where it lands
+
+| File | Lands as | What it is |
+|---|---|---|
+| `policy/managed-settings.json` | `/etc/claude-code/managed-settings.json` | Claude Code policy: deny list, sandbox, credential files |
+| `policy/cplt-config.toml` | `/etc/agentfence/cplt.toml` | cplt policy for every other agent, via `$CPLT_CONFIG` |
+| `policy/50-agentfence-audit.rules` | `/etc/audit/rules.d/50-…` | what auditd records |
+| `policy/50-agentfence-user-limits.conf` | `/etc/systemd/system/user-.slice.d/50-…` | the caps; login nodes, and only if nothing else is limiting |
+| `policy/profile.d-agentfence.sh` | `/etc/profile.d/10-agentfence.sh` | sets `PATH` and `CPLT_CONFIG` at login |
+| `policy/bin/agentfence-shim` | `/opt/agentfence/bin/agentfence-shim` | routes other agents through cplt |
+
+These stay in their own native formats rather than being generated from the
+settings file. Each is validated against its own upstream schema — `managed-settings.json` against
+`json.schemastore.org`, where **an unknown key is ignored with no error**, so a
+typo is indistinguishable from a working setting; generating it from another
+format would put a translation step exactly where that typo would hide. And a
+policy every site can quietly loosen is not a policy. Settings describe your
+machine; the policy is the decision, and it is meant to be the same everywhere.
+
+Settings reach the policy at exactly one place: `engine/render-settings.py`
+injects your paths into `managed-settings.json` as it is installed, and merges
+your overlay if you have one.
 
 ### What it puts on a node
 
@@ -261,7 +353,7 @@ These are worth calling out because each one silently produced *no* policy,
 with no error:
 
 1. **`#` comments.** JSON has none. The file fails to parse and Claude Code
-   falls back to defaults. `scripts/validate.sh` checks this.
+   falls back to defaults. `tools/validate.sh` checks this.
 2. **`Read(/etc/**)` is not an absolute path.** In permission-rule syntax a
    single `/` means *relative to the settings file*, so that rule resolved to
    `/etc/claude-code/etc/**` and matched nothing. Absolute needs a double
@@ -289,26 +381,43 @@ Two settings do most of the work and were missing entirely:
 ## Layout
 
 ```
-files/                          what gets installed on a node
+engine/                         the code - site-independent
+  installer-template.sh         plan / diff / apply; the installer minus payload
+  render-settings.py            merges a site overlay, injects site paths
+
+policy/                         the base policy - all of this lands on a node
   managed-settings.json         -> /etc/claude-code/managed-settings.json
-  cplt-config.toml              -> /etc/agentfence/cplt.toml   (read via $CPLT_CONFIG)
+  cplt-config.toml              -> /etc/agentfence/cplt.toml  (via $CPLT_CONFIG)
   profile.d-agentfence.sh       -> /etc/profile.d/10-agentfence.sh
-  bin/agentfence-shim            -> /opt/agentfence/bin/{copilot,opencode,goose}
-  50-agentfence-user-limits.conf       -> /etc/systemd/system/user-.slice.d/
-  50-agentfence-root-exempt.conf       -> /etc/systemd/system/user-0.slice.d/
-  50-agentfence-audit.rules           -> /etc/audit/rules.d/
+  bin/agentfence-shim           -> /opt/agentfence/bin/{copilot,opencode,goose}
+  50-agentfence-user-limits.conf  -> /etc/systemd/system/user-.slice.d/
+  50-agentfence-root-exempt.conf  -> /etc/systemd/system/user-0.slice.d/
+  50-agentfence-audit.rules       -> /etc/audit/rules.d/
 
-scripts/
-  installer-template.sh         the installer, minus its payload
-  build-installer.sh            `make dist` - embeds files/ into the template
-  validate.sh                   checks the config files before a build
+templates/                      what `agentfence init` writes out for an admin
+  agentfence.conf.example
 
-dist/agentfence          the built installer. Not in git.
+tools/                          development only, never shipped
+  build-installer.sh            `make dist`
+  validate.sh                   offline checks, run before every build
+
+pypi/                           the uvx entry point and nothing else
+
+dist/agentfence                 the built installer. Not in git.
 ```
 
-`files/` is the only source of truth. The installer carries a copy of it as an
-embedded payload, so changing a config file and running `make dist` is all
-there is to releasing a new version. Never edit `dist/agentfence`.
+**Terms used throughout:** the *engine* is the installer logic and is the same
+everywhere; the *base policy* is what ships; a *site policy* is an admin's
+`--policy-dir` laid over it; *settings* are the `AGENTFENCE_*` values; the
+*payload* is the base64 tar inside the built installer.
+
+`engine/` and `policy/` are the source of truth. The installer carries the
+payload embedded, so editing a policy file and running `make dist` is all there
+is to cutting a new version. Never edit `dist/agentfence`.
+
+The payload is assembled **flat**, regardless of this layout. Those flat names
+are what an admin types in a `--policy-dir` — `50-agentfence-audit.rules.append`,
+not `policy/50-…` — so the repository can be reorganised without breaking them.
 
 ## Rollback
 
