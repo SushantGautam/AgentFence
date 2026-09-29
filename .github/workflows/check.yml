@@ -23,6 +23,27 @@ jobs:
           AGENTFENCE_SHARED_APPS: /shared/apps
           AGENTFENCE_SHARED_WORKSPACES: /shared/projects
         run: ./dist/agentfence --role login || [ $? -eq 1 ]
+      - name: --config is read, and beats the environment
+        run: |
+          cat > /tmp/t.conf <<'EOF'
+          # a comment
+          AGENTFENCE_SHARED_HOMES="/shared/home /export/home"
+          AGENTFENCE_SHIM_AGENTS="copilot aider"
+          NOT_A_REAL_KEY="x"
+          EOF
+          out=$(AGENTFENCE_SHARED_HOMES=/env/home ./dist/agentfence --role login --config /tmp/t.conf || [ $? -eq 1 ])
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "/shared/home /export/home"
+          printf '%s' "$out" | grep -qv "/env/home" || { echo "--config did not override the environment"; exit 1; }
+          printf '%s' "$out" | grep -q "ignoring unknown setting"
+          printf '%s' "$out" | grep -q "bin/aider"
+
+      - name: A missing --config file is an error, not a silent default
+        run: |
+          if ./dist/agentfence --role login --config /nope/missing.conf; then
+            echo "expected a refusal"; exit 1
+          fi
+
       - name: A bad site path is refused
         run: |
           if AGENTFENCE_SHARED_HOMES=relative/path ./dist/agentfence --role login; then

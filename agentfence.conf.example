@@ -1,0 +1,35 @@
+# agentfence site settings.
+#
+#   agentfence apply --config /etc/agentfence/site.env
+#
+# Same names as the AGENTFENCE_* environment variables. Precedence, highest
+# first: --config, the environment, /etc/agentfence/site.env, the defaults.
+#
+# Every path must be absolute. A relative path, a bare /, a wildcard or a ..
+# is refused before anything is written - each would widen a narrow rule to
+# cover the whole filesystem.
+
+# Named in the banner users see when an agent starts.
+AGENTFENCE_SITE_NAME="This shared machine"
+
+# Where other people's home directories live. Made unreadable, and their
+# .ssh denied outright. Space-separated. /home is always covered.
+AGENTFENCE_SHARED_HOMES=""
+
+# Shared software trees: readable, never writable.
+AGENTFENCE_SHARED_APPS=""
+
+# Shared project space agents are allowed to read. Without this, agents can
+# read only $HOME - allowManagedReadPathsOnly is on, so anything not listed
+# cannot be read at all.
+AGENTFENCE_SHARED_WORKSPACES=""
+
+# Login nodes only, and only where no other limiter is already running.
+# Compute nodes are Slurm's; nothing here touches them.
+AGENTFENCE_MEMORY_HIGH="8G"     # soft: throttle and reclaim
+AGENTFENCE_MEMORY_MAX="16G"     # hard: the cgroup OOM-kills past this
+AGENTFENCE_CPU_QUOTA="400%"     # 400% = four cores
+AGENTFENCE_TASKS_MAX="4096"
+
+# Agents that get a cplt shim on PATH.
+AGENTFENCE_SHIM_AGENTS="copilot opencode goose"

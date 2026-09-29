@@ -8,6 +8,7 @@
 #   ./agentfence apply        make the node match. Asks first.
 #   ./agentfence uninstall    remove everything it installed
 #
+#   --config FILE   site settings; see "Settings" in README.md
 #   --yes           do not ask
 #   --role login|compute|auto        default auto
 #   --nodes "a b c" do the same on those hosts over ssh
@@ -25,7 +26,7 @@ BUILT="@@BUILT@@"
 
 readonly E_OK=0 E_DRIFT=1 E_FAIL=2
 
-ACTION=status ROLE=auto ASSUME_YES=0 DO_PACKAGES=1 NODES=""
+ACTION=status ROLE=auto ASSUME_YES=0 DO_PACKAGES=1 NODES="" CONFIG_FILE=""
 WORK="" FAILED=0
 
 # --------------------------------------------------------------------- output
@@ -48,6 +49,7 @@ trap '[ -n "$WORK" ] && rm -rf "$WORK"' EXIT
 while [ $# -gt 0 ]; do
     case "$1" in
         status|apply|uninstall) ACTION="$1" ;;
+        --config)      CONFIG_FILE="${2:?--config needs a file}"; shift ;;
         --role)        ROLE="${2:?--role needs a value}"; shift ;;
         --nodes)       NODES="${2:?--nodes needs a value}"; shift ;;
         --yes|-y)      ASSUME_YES=1 ;;
@@ -67,10 +69,16 @@ if [ -n "$NODES" ]; then
         if ! scp -q "$0" "$host:/tmp/agentfence"; then
             problem "$host: could not copy the script"; rc=$E_FAIL; continue
         fi
+        # The settings have to travel with it, or each node would fall back to
+        # whatever it already had and the fleet would drift apart.
+        if [ -n "$CONFIG_FILE" ] && ! scp -q "$CONFIG_FILE" "$host:/tmp/agentfence.conf"; then
+            problem "$host: could not copy the config file"; rc=$E_FAIL; continue
+        fi
         ssh -t "$host" "sudo bash /tmp/agentfence $ACTION --role $ROLE \
+            $([ -n "$CONFIG_FILE" ] && echo --config /tmp/agentfence.conf) \
             $([ "$ASSUME_YES" = 1 ] && echo --yes) \
             $([ "$DO_PACKAGES" = 0 ] && echo --no-packages); \
-            s=\$?; rm -f /tmp/agentfence; exit \$s"
+            s=\$?; rm -f /tmp/agentfence /tmp/agentfence.conf; exit \$s"
         case "$?" in 0) ;; 1) [ "$rc" = "$E_OK" ] && rc=$E_DRIFT ;; *) rc=$E_FAIL ;; esac
     done
     exit $rc
@@ -81,30 +89,56 @@ WORK="$(mktemp -d)" || die "could not create a temporary directory"
 awk 'f{print} /^__PAYLOAD__$/{f=1}' "$0" | base64 -d | tar -xz -C "$WORK" \
     || die "the payload is corrupt; copy the script again"
 
-# --------------------------------------------------------------- site layout
-# Where this site keeps shared home directories, read-only software trees and
-# project space. These differ per machine and there is no sane default, so
-# they are settings, not constants in the payload.
+# ------------------------------------------------------------------- settings
+# Everything that differs between sites lives here, in one set of names. The
+# same names work as environment variables, as lines in a --config file, and
+# as lines in the file `apply` leaves on the node, so there is one vocabulary
+# to learn rather than three.
 #
-# Precedence: the environment wins, otherwise whatever a previous `apply`
-# recorded, otherwise empty. The recorded file is what makes `status` from
-# cron stable - without it a run with no variables set would report drift
-# against the node every time and the exit code would be useless.
-SITE_ENV=/etc/agentfence/site.env
-if [ -r "$SITE_ENV" ]; then
-    # Only our own keys, and only KEY=value - never source an arbitrary file
-    # as root.
-    while IFS='=' read -r key value; do
-        case "$key" in
-            AGENTFENCE_SHARED_HOMES|AGENTFENCE_SHARED_APPS|\
-            AGENTFENCE_SHARED_WORKSPACES|AGENTFENCE_SITE_NAME|\
-            AGENTFENCE_MEMORY_HIGH|AGENTFENCE_MEMORY_MAX|\
-            AGENTFENCE_CPU_QUOTA|AGENTFENCE_TASKS_MAX)
-                value="${value%\"}"; value="${value#\"}"
-                [ -z "${!key:-}" ] && export "$key=$value" ;;
-        esac
-    done < "$SITE_ENV"
-fi
+# Precedence, highest first:
+#   --config FILE            what you asked for on this run
+#   the environment          AGENTFENCE_* already exported
+#   /etc/agentfence/site.env what the last apply recorded here
+#   the defaults below
+#
+# The recorded file is what makes `status` from cron stable: without it, a run
+# with no variables set would report drift against the node every time and the
+# exit code would be worthless.
+SETTINGS="AGENTFENCE_SITE_NAME AGENTFENCE_SHARED_HOMES AGENTFENCE_SHARED_APPS \
+AGENTFENCE_SHARED_WORKSPACES AGENTFENCE_MEMORY_HIGH AGENTFENCE_MEMORY_MAX \
+AGENTFENCE_CPU_QUOTA AGENTFENCE_TASKS_MAX AGENTFENCE_SHIM_AGENTS"
+
+# KEY=value only, and only keys we know. Never `source` a file as root: that
+# would execute whatever is in it.
+# mode: `override` for a file the user named on this run, which beats an
+# ambient variable; `fill` for the node's recorded settings, which do not.
+load_config() {
+    local file="$1" required="$2" mode="$3" key value known
+    if [ ! -r "$file" ]; then
+        [ "$required" = required ] && die "cannot read the config file: $file"
+        return 0
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in ''|\#*) continue ;; esac
+        key="${line%%=*}"; value="${line#*=}"
+        key="${key%"${key##*[! ]}"}"          # trim trailing spaces
+        value="${value#"${value%%[! ]*}"}"    # trim leading spaces
+        value="${value%\"}"; value="${value#\"}"
+        value="${value%\'}"; value="${value#\'}"
+        known=0
+        for k in $SETTINGS; do [ "$k" = "$key" ] && known=1; done
+        if [ "$known" = 0 ]; then
+            note "ignoring unknown setting in $file: $key"
+            continue
+        fi
+        if [ "$mode" = override ] || [ -z "${!key:-}" ]; then
+            export "$key=$value"
+        fi
+    done < "$file"
+}
+
+[ -n "$CONFIG_FILE" ] && load_config "$CONFIG_FILE" required override
+load_config /etc/agentfence/site.env optional fill
 
 export AGENTFENCE_SHARED_HOMES="${AGENTFENCE_SHARED_HOMES:-}"
 export AGENTFENCE_SHARED_APPS="${AGENTFENCE_SHARED_APPS:-}"
@@ -114,15 +148,17 @@ export AGENTFENCE_MEMORY_HIGH="${AGENTFENCE_MEMORY_HIGH:-8G}"
 export AGENTFENCE_MEMORY_MAX="${AGENTFENCE_MEMORY_MAX:-16G}"
 export AGENTFENCE_CPU_QUOTA="${AGENTFENCE_CPU_QUOTA:-400%}"
 export AGENTFENCE_TASKS_MAX="${AGENTFENCE_TASKS_MAX:-4096}"
+export AGENTFENCE_SHIM_AGENTS="${AGENTFENCE_SHIM_AGENTS:-copilot opencode goose}"
 
-# Written back out so the next run, by anyone, sees the same settings.
+# Written back out so the next run, by anyone, sees the same settings. It is
+# also a valid --config file, so a node can be copied to another node.
 {
     printf '# Managed by agentfence. Written by `agentfence apply`.\n'
-    printf '# Change a value by re-running apply with it in the environment:\n'
+    printf '# A valid --config file: copy it to another node and pass it there.\n'
+    printf '# Change a value by re-running apply with it set:\n'
+    printf '#   agentfence apply --config ./agentfence.conf\n'
     printf '#   AGENTFENCE_SHARED_HOMES=/shared/home sudo -E agentfence apply\n'
-    for key in AGENTFENCE_SITE_NAME AGENTFENCE_SHARED_HOMES AGENTFENCE_SHARED_APPS \
-               AGENTFENCE_SHARED_WORKSPACES AGENTFENCE_MEMORY_HIGH \
-               AGENTFENCE_MEMORY_MAX AGENTFENCE_CPU_QUOTA AGENTFENCE_TASKS_MAX; do
+    for key in $SETTINGS; do
         printf '%s="%s"\n' "$key" "${!key}"
     done
 } > "$WORK/site.env"
@@ -183,7 +219,6 @@ bin/agentfence-shim:/opt/agentfence/bin/agentfence-shim:0755:login,compute:alway
 50-agentfence-user-limits.conf:/etc/systemd/system/user-.slice.d/50-agentfence-user-limits.conf:0644:login:no_existing_limiter
 50-agentfence-root-exempt.conf:/etc/systemd/system/user-0.slice.d/50-agentfence-root-exempt.conf:0644:login:no_existing_limiter
 "
-SHIM_AGENTS="copilot opencode goose"
 SHIM_TARGET=/opt/agentfence/bin/agentfence-shim
 
 always()             { return 0; }
@@ -242,7 +277,7 @@ build_plan() {
         fi
     done <<< "$DESIRED_STATE"
 
-    for agent in $SHIM_AGENTS; do
+    for agent in $AGENTFENCE_SHIM_AGENTS; do
         if [ "$(readlink "/opt/agentfence/bin/$agent" 2>/dev/null)" = "$SHIM_TARGET" ]; then
             PLAN+=("keep-link||/opt/agentfence/bin/$agent||")
         else

@@ -11,9 +11,17 @@ It writes no sandbox of its own. It switches on and standardises the ones the
 agents already ship, and puts ordinary OS limits underneath them.
 
 Written for an HPC cluster and generalised from there; hostnames and paths in
-the examples are placeholders, so substitute your own. **Not yet run on a
-node.** Everything here passes the offline checks in `scripts/validate.sh` and
-nothing more — treat a first `apply` as untested, on one node, watched.
+the examples are placeholders, so substitute your own.
+
+**How far this has actually been tested.** CI installs it on a throwaway
+Ubuntu runner on every push and checks that the policy that lands is valid and
+carries the site paths, that a second `apply` is a no-op, that tampering with
+the installed policy is detected and repaired, and that `uninstall` leaves
+nothing behind. What has *not* happened: a run on a real multi-user machine,
+with real users, a real shared filesystem, Slurm, or `bwrap` and `cplt`
+actually present — CI has neither installed. So the convergence logic is
+exercised and the enforcement is not. Treat a first `apply` on a real node as
+untested: one node, watched.
 
 ## Install
 
@@ -71,19 +79,41 @@ sudo ./agentfence apply --nodes "node01 node02 node03" --yes
 
 To undo everything: `sudo ./agentfence uninstall`.
 
-### Telling it about your site
+## Settings
 
 Where a site keeps shared home directories, software trees and project space
 differs per machine, and there is no sensible default, so these are settings
-rather than constants. Pass them once, with `sudo -E` so the variables survive:
+rather than constants baked into the payload.
+
+One set of names, three ways to supply them. A config file is the one to use
+for more than a single node:
 
 ```bash
-AGENTFENCE_SITE_NAME="Physics cluster" \
-AGENTFENCE_SHARED_HOMES="/shared/home" \
-AGENTFENCE_SHARED_APPS="/shared/apps" \
-AGENTFENCE_SHARED_WORKSPACES="/shared/projects" \
-  sudo -E ./agentfence apply
+cp agentfence.conf.example agentfence.conf    # edit it
+sudo ./agentfence apply --config ./agentfence.conf
 ```
+
+The file is `KEY=value`, `#` comments allowed. It is never sourced as a
+shell script and unknown keys are reported and ignored, so a typo is visible
+rather than silent:
+
+```ini
+AGENTFENCE_SITE_NAME="Physics cluster"
+AGENTFENCE_SHARED_HOMES="/shared/home /export/home"
+AGENTFENCE_SHARED_APPS="/shared/apps"
+AGENTFENCE_SHARED_WORKSPACES="/shared/projects"
+```
+
+The same names work as environment variables, with `sudo -E` so they survive:
+
+```bash
+AGENTFENCE_SHARED_HOMES="/shared/home" sudo -E ./agentfence apply
+```
+
+**Precedence**, highest first: `--config`, then the environment, then
+`/etc/agentfence/site.env`, then the defaults. A `--config` file that cannot
+be read is an error — it will not quietly fall back to defaults and install a
+weaker policy than you asked for.
 
 | Variable | What it does | Default |
 |---|---|---|
@@ -93,6 +123,7 @@ AGENTFENCE_SHARED_WORKSPACES="/shared/projects" \
 | `AGENTFENCE_SHARED_WORKSPACES` | Shared project space agents are allowed to read | none |
 | `AGENTFENCE_MEMORY_HIGH` / `_MAX` | Soft and hard memory caps, login nodes only | `8G` / `16G` |
 | `AGENTFENCE_CPU_QUOTA` / `AGENTFENCE_TASKS_MAX` | CPU and PID caps, login nodes only | `400%` / `4096` |
+| `AGENTFENCE_SHIM_AGENTS` | Agents that get a cplt shim on `PATH` | `copilot opencode goose` |
 
 Each takes a space-separated list, and every path must be absolute. A relative
 path, a bare `/`, a wildcard or a `..` is refused before anything is written —
@@ -104,8 +135,11 @@ agents on a site whose projects live outside `$HOME` cannot see their own work.
 
 `apply` records what you passed in `/etc/agentfence/site.env` and reads it back
 on later runs, so a bare `agentfence` from cron compares against the same
-settings instead of reporting drift against itself. To change a value, re-run
-`apply` with the new one in the environment.
+settings instead of reporting drift against itself. That file is itself a valid
+`--config` file: copy it to another node to give it the same settings.
+
+With `--nodes`, the config file is copied to each host along with the installer,
+so a fleet cannot drift apart because one node was missing a variable.
 
 Memory and CPU caps work the same way:
 

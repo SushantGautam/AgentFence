@@ -75,9 +75,12 @@ additionally runs `files/render-settings.py` with no site paths, with a full
 set, and with input that must be refused — that renderer builds JSON on the
 node, where `validate.sh` never runs, so it is exercised here instead.
 
-None of this proves behaviour on a node. Only running `agentfence` on
-it on a real node does. Do not report a change as verified on the strength of
-the offline checks alone — say plainly that it has not been run.
+None of this proves behaviour on a node. CI goes one step further and applies
+the installer on a disposable Ubuntu runner, so convergence, drift repair and
+uninstall are covered. Neither proves enforcement: no runner has `bwrap` or
+`cplt` installed, no runner has other users. Do not report a change as verified
+against a real multi-user host on the strength of either — say plainly what was
+run and what was not.
 
 ## Settings-schema changes
 
@@ -100,8 +103,9 @@ same change, or older clients silently ignore it.
 | Change | File |
 |---|---|
 | Claude Code policy | `files/managed-settings.json` |
-| CPU/RAM/PID caps | `files/50-agentfence-user-limits.conf`, values from `AGENTFENCE_*` env vars |
-| Which agents get a cplt shim | `SHIM_AGENTS` in `scripts/installer-template.sh` |
+| CPU/RAM/PID caps | `files/50-agentfence-user-limits.conf`, values from settings |
+| A new site setting | `SETTINGS` in `scripts/installer-template.sh`, plus `agentfence.conf.example` and the README table |
+| Which agents get a cplt shim | `AGENTFENCE_SHIM_AGENTS`, a setting |
 | Site-wide cplt policy | `files/cplt-config.toml`, delivered as `$CPLT_CONFIG` |
 | Shim behaviour | `files/bin/agentfence-shim` |
 | Audit rules | `files/50-agentfence-audit.rules` |
