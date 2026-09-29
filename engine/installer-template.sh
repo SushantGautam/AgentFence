@@ -190,7 +190,40 @@ export AGENTFENCE_MEMORY_HIGH="${AGENTFENCE_MEMORY_HIGH:-8G}"
 export AGENTFENCE_MEMORY_MAX="${AGENTFENCE_MEMORY_MAX:-16G}"
 export AGENTFENCE_CPU_QUOTA="${AGENTFENCE_CPU_QUOTA:-400%}"
 export AGENTFENCE_TASKS_MAX="${AGENTFENCE_TASKS_MAX:-4096}"
-export AGENTFENCE_SHIM_AGENTS="${AGENTFENCE_SHIM_AGENTS:-copilot opencode goose}"
+# Every binary name cplt can launch, minus the ones that must not be shadowed.
+# Taken from cplt's own src/agent.rs `binary_names()`, which is the source of
+# truth; `deepseek` and `deepseek-harness` are spellings for --agent, not
+# commands anything installs, so shimming them would shadow nothing.
+#
+# Deliberately absent:
+#   claude  - Claude Code sandboxes itself from managed-settings.json, and
+#             cplt sanitises the child environment, which breaks Claude Code's
+#             CLAUDE_CODE_PROCESS_WRAPPER contract. Do not stack the two.
+#   dsh     - the DeepSeek harness binary, but `dsh` is also distributed shell,
+#             packaged on Debian and used on clusters. Shimming it would route
+#             an admin's cluster command through an AI agent sandbox. Add it
+#             with AGENTFENCE_SHIM_AGENTS if this site has no distributed shell.
+export AGENTFENCE_SHIM_AGENTS="${AGENTFENCE_SHIM_AGENTS:-copilot opencode antigravity agy pi goose}"
+
+# A shim goes on PATH ahead of the real binary, for every user on the node, so
+# the name matters more than it looks. The shim ends in `cplt --agent <name>`,
+# which means a name cplt cannot launch is broken anyway - and a name like
+# `bash` or `cc` would shadow a system tool for everyone. Checking against
+# cplt's own list catches both at install time rather than at a user's prompt.
+SHIMMABLE="copilot opencode antigravity agy pi goose dsh"
+for agent in $AGENTFENCE_SHIM_AGENTS; do
+    case " $SHIMMABLE " in
+        *" $agent "*) continue ;;
+    esac
+    case "$agent" in
+        claude|cc|claude-code)
+            die "refusing to shim '$agent': Claude Code sandboxes itself from /etc/claude-code/managed-settings.json, and cplt strips the environment its launcher needs. Do not stack the two." ;;
+        shell|sh|bash|zsh|fish|dash|ksh)
+            die "refusing to shim '$agent': that would put a shim ahead of the shell on every user's PATH." ;;
+        *)
+            die "refusing to shim '$agent': cplt cannot launch it, so the shim would fail when a user ran it. Known: $SHIMMABLE" ;;
+    esac
+done
 export AGENTFENCE_POLICY_DIR="${AGENTFENCE_POLICY_DIR:-}"
 
 # The flag is just the highest layer of the same setting.

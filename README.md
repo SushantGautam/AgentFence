@@ -79,11 +79,19 @@ sudo ./agentfence apply --config ./site.conf
 | `AGENTFENCE_SHARED_WORKSPACES` | Shared project space agents may read | none |
 | `AGENTFENCE_MEMORY_HIGH` / `_MAX` | Memory caps, login nodes only | `8G` / `16G` |
 | `AGENTFENCE_CPU_QUOTA` / `_TASKS_MAX` | CPU and PID caps, login nodes only | `400%` / `4096` |
-| `AGENTFENCE_SHIM_AGENTS` | Agents that get a cplt shim | `copilot opencode goose` |
+| `AGENTFENCE_SHIM_AGENTS` | Agents that get a cplt shim | `copilot opencode antigravity agy pi goose` |
 
 Each takes a space-separated list, and paths must be absolute. A relative path,
 a bare `/`, a wildcard or a `..` is refused before anything is written — each
 would widen a narrow rule to cover the whole filesystem.
+
+`AGENTFENCE_SHIM_AGENTS` accepts only names [cplt](https://github.com/navikt/cplt)
+can launch — `copilot opencode antigravity agy pi goose dsh` — because the shim
+ends in `cplt --agent <name>`. Anything else is refused at install time rather
+than failing at a user's prompt. Two notable absences from the default:
+`claude`, because Claude Code sandboxes itself and must not be stacked with
+cplt, and `dsh`, because that name is also distributed shell on many clusters;
+add `dsh` if yours has no such command.
 
 Set `AGENTFENCE_SHARED_WORKSPACES` if your projects live outside `$HOME`.
 Anything not listed there cannot be read at all, so without it agents cannot
@@ -148,7 +156,7 @@ policy than you asked for.
 
 - A policy file for Claude Code, so an agent cannot read `~/.ssh`, write to
   `/etc` or run `sudo`, and its shell commands run in a sandbox.
-- The same for other agents (Copilot, OpenCode, goose), via
+- The same for other agents (Copilot, OpenCode, Antigravity, Pi, goose), via
   [cplt](https://github.com/navikt/cplt).
 - Per-user memory and CPU caps on **login nodes only**, and only if nothing
   else is already doing that job.

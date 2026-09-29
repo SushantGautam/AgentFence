@@ -28,7 +28,7 @@ jobs:
           cat > /tmp/t.conf <<'EOF'
           # a comment
           AGENTFENCE_SHARED_HOMES="/shared/home /export/home"
-          AGENTFENCE_SHIM_AGENTS="copilot aider"
+          AGENTFENCE_SHIM_AGENTS="copilot pi"
           NOT_A_REAL_KEY="x"
           EOF
           out=$(AGENTFENCE_SHARED_HOMES=/env/home ./dist/agentfence --role login --config /tmp/t.conf || [ $? -eq 1 ])
@@ -36,7 +36,7 @@ jobs:
           printf '%s' "$out" | grep -q "/shared/home /export/home"
           printf '%s' "$out" | grep -qv "/env/home" || { echo "--config did not override the environment"; exit 1; }
           printf '%s' "$out" | grep -q "ignoring unknown setting"
-          printf '%s' "$out" | grep -q "bin/aider"
+          printf '%s' "$out" | grep -q "bin/pi"
 
       - name: config reports each value and where it came from
         run: |
@@ -88,6 +88,14 @@ jobs:
           if ./dist/agentfence --role login --policy-dir /nope/missing; then
             echo "expected a refusal for --policy-dir"; exit 1
           fi
+
+      - name: A shim name cplt cannot launch is refused
+        run: |
+          for bad in bash claude cc nonsense; do
+            if AGENTFENCE_SHIM_AGENTS="$bad" ./dist/agentfence config; then
+              echo "expected a refusal for $bad"; exit 1
+            fi
+          done
 
       - name: A bad site path is refused
         run: |

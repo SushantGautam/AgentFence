@@ -31,5 +31,14 @@ AGENTFENCE_MEMORY_MAX="16G"     # hard: the cgroup OOM-kills past this
 AGENTFENCE_CPU_QUOTA="400%"     # 400% = four cores
 AGENTFENCE_TASKS_MAX="4096"
 
-# Agents that get a cplt shim on PATH.
-AGENTFENCE_SHIM_AGENTS="copilot opencode goose"
+# Agents that get a cplt shim on PATH, so the sandboxed invocation is the
+# default one. Only names cplt can launch are accepted:
+#   copilot opencode antigravity agy pi goose dsh
+#
+# `claude` is refused on purpose - Claude Code sandboxes itself from
+# /etc/claude-code/managed-settings.json and must not be stacked with cplt.
+#
+# `dsh` is the DeepSeek harness, and is left out by default because `dsh` is
+# also distributed shell on many clusters. Add it if this site has no such
+# command.
+AGENTFENCE_SHIM_AGENTS="copilot opencode antigravity agy pi goose"
