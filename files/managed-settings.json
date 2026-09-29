@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "requiredMinimumVersion": "2.1.193",
+  "allowManagedPermissionRulesOnly": true,
+  "disableSideloadFlags": true,
+
+  "companyAnnouncements": [
+    "{{ site_name }}. Claude Code runs in a bubblewrap sandbox: bash cannot write outside your workspace, and other users' home directories are not readable.",
+    "Sessions are logged. Do not paste passwords, live secrets, or personal data into prompts."
+  ],
+
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Bash(systemctl *)",
+      "Bash(reboot*)",
+      "Bash(shutdown*)",
+      "Bash(scontrol *)",
+      "Bash(scancel *)",
+      "Read(//etc/shadow)",
+      "Read(//home/**/.ssh/**)",
+      "Write(//etc/**)",
+      "Edit(//etc/**)"
+    ]
+  },
+
+  "sandbox": {
+    "enabled": true,
+    "enabledPlatforms": ["linux"],
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": true,
+    "bwrapPath": "/usr/bin/bwrap",
+
+    "filesystem": {
+      "denyWrite": [
+        "//etc",
+        "//usr",
+        "//opt",
+        "//boot",
+        "//var"
+      ],
+      "denyRead": [
+        "//home",
+        "//etc/slurm"
+      ],
+      "allowRead": [
+        "~/"
+      ],
+      "allowManagedReadPathsOnly": true
+    },
+
+    "credentials": {
+      "files": [
+        "~/.ssh/id_*",
+        "~/.ssh/authorized_keys",
+        "~/.aws/credentials",
+        "~/.kube/config",
+        "~/.netrc",
+        "~/.git-credentials",
+        "~/.pypirc"
+      ],
+      "envVars": [
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "HF_TOKEN",
+        "OPENAI_API_KEY",
+        "SLURM_JWT"
+      ]
+    }
+  }
+}

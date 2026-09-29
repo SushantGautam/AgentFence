@@ -1,0 +1,16 @@
+## Managed by agentfence. Low-volume audit rules for AI coding agents.
+## Purpose: tamper-evidence + incident forensics. NOT a control.
+
+# Someone edited or removed the managed policy.
+-w /etc/claude-code/ -p wa -k agentfence-config
+-w /etc/cursor/ -p wa -k agentfence-config
+-w /etc/code/ -p wa -k agentfence-config
+
+# Admin-provided agent binaries were executed.
+-w /usr/local/bin/claude -p x -k agentfence-exec
+-w /usr/bin/bwrap -p x -k agentfence-exec
+
+## OPTIONAL, HIGH VOLUME: every exec by every real user. On a 60-user HPC
+## login node this is millions of events/day. Enable only for a time-boxed
+## investigation, and size /var/log/audit first.
+# -a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=unset -k agentfence-exec-all

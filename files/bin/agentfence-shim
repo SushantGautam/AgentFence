@@ -1,0 +1,44 @@
+#!/bin/sh
+# agentfence - one shim, symlinked as each agent name in /opt/agentfence/bin.
+#
+# Purpose: make the sandboxed invocation the DEFAULT one, for agents that have
+# no managed-settings equivalent. Claude Code does NOT go through here: it
+# sandboxes itself from /etc/claude-code/managed-settings.json.
+#
+# This is convenience, not a boundary. A user who types the real path is
+# unsandboxed, and that is fine - the boundary lives in the systemd slice,
+# filesystem permissions and Slurm cgroups underneath.
+set -eu
+
+agent=$(basename "$0")
+
+# cplt refuses to nest. If we are already inside it, run the real binary.
+if [ -n "${__CPLT_WRAPPED:-}" ]; then
+    exec_real=1
+else
+    exec_real=0
+fi
+
+# Find the real binary: first hit on PATH that is not in our shim dir.
+shim_dir=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+real=""
+IFS=:
+for d in $PATH; do
+    [ "$d" = "$shim_dir" ] && continue
+    if [ -x "$d/$agent" ]; then real="$d/$agent"; break; fi
+done
+unset IFS
+
+if [ -z "$real" ]; then
+    echo "agentfence: $agent is not installed" >&2
+    exit 127
+fi
+
+[ "$exec_real" = 1 ] && exec "$real" "$@"
+
+if ! command -v cplt >/dev/null 2>&1; then
+    echo "agentfence: cplt missing, refusing to run $agent unsandboxed" >&2
+    exit 1
+fi
+
+exec cplt --agent "$agent" --quiet -- "$@"

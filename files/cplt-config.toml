@@ -1,0 +1,36 @@
+# agentfence -> /etc/agentfence/cplt.toml
+#
+# Site-wide cplt policy. Reaches every user via CPLT_CONFIG, exported from
+# /etc/profile.d/10-agentfence.sh. cplt has no /etc path of its own, but
+# CPLT_CONFIG replaces the whole config file, which is the supported way in.
+#
+# cplt prints an unsuppressable warning naming this file because it sits
+# outside ~/.config/cplt/. That is wanted here: users should see that a site
+# policy is in effect. `--quiet` does not hide it.
+#
+# This is a DEFAULT, not a boundary: a user can unset CPLT_CONFIG. The boundary
+# is the systemd slice, filesystem permissions and Slurm cgroups underneath.
+# See README.md, "Threat model".
+
+[sandbox]
+quiet = true
+allow_lifecycle_scripts = false   # npm/yarn postinstall: top supply-chain vector
+
+[proxy]
+enabled = true
+
+[git_guard]
+mode = "warn"
+protect_default_branch_only = true
+
+[deny]
+# deny.paths merges across layers and tightens unconditionally.
+paths = [
+  "~/.ssh",
+  "~/.gnupg",
+  "~/.kube",
+  "~/.config/gh",
+  "~/.netrc",
+  "~/.git-credentials",
+  "~/.pypirc",
+]
