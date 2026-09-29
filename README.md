@@ -229,6 +229,7 @@ rearranged.
 
 ## More
 
+- [sushantgautam.github.io/AgentFence](https://sushantgautam.github.io/AgentFence/) — the short version
 - [docs/design.md](docs/design.md) — threat model, architecture, what was
   rejected and why, known limits, and why `pam_slurm_adopt` is not installed
   here.
