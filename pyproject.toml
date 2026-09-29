@@ -17,7 +17,7 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 
 [project.urls]
-Homepage = "https://github.com/SushantGautam/agentfence"
+Homepage = "https://github.com/SushantGautam/AgentFence"
 
 [project.scripts]
 agentfence = "agentfence.cli:main"

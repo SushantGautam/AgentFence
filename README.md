@@ -24,8 +24,8 @@ machine shared by many people, so download and verification are deliberately
 separate steps from execution:
 
 ```bash
-curl -fsSLO https://github.com/SushantGautam/agentfence/releases/latest/download/agentfence
-curl -fsSLO https://github.com/SushantGautam/agentfence/releases/latest/download/agentfence.sha256
+curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence
+curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence.sha256
 sha256sum -c agentfence.sha256       # do this before running anything as root
 chmod +x agentfence
 sudo ./agentfence                    # shows what would change. Changes nothing.
@@ -43,7 +43,7 @@ ssh login1 'sudo ./agentfence'
 **With uv**, for a throwaway or test machine:
 
 ```bash
-uvx --from git+https://github.com/SushantGautam/agentfence agentfence apply
+uvx --from git+https://github.com/SushantGautam/AgentFence agentfence apply
 ```
 
 Convenient, and worse in one specific way: uv resolves and fetches from the
