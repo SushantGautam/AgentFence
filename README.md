@@ -23,10 +23,10 @@ poked at. Run it as often as you like.
 
 ## Install
 
-Pick whichever fits the machine.
+`agentfence` is one self-contained file — bash, coreutils and python3, no
+network at run time. Copy it to a node and run it.
 
-**A release artefact.** Needs no network at run time, which matters on nodes
-that have none:
+**A release artefact**, verified before it runs as root:
 
 ```bash
 curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence
@@ -35,23 +35,11 @@ sha256sum -c agentfence.sha256
 chmod +x agentfence && sudo ./agentfence apply
 ```
 
-**With uv**, if the node has `uv` and outbound network. Pin it so you know what
-you are running:
-
-```bash
-uvx --from git+https://github.com/SushantGautam/AgentFence@v0.1.0 agentfence apply
-```
-
-Compute nodes usually have neither `uv` nor outbound network, which is the only
-reason this is not the default. Where both exist it is fine.
-
 **From source:**
 
 ```bash
 make dist && scp dist/agentfence login1:
 ```
-
-`agentfence` is one self-contained file. Copy it anywhere and run it.
 
 ## Use it
 
@@ -206,7 +194,6 @@ engine/      the code: plan / diff / apply, and the policy renderer
 policy/      the base policy - all of this lands on a node
 templates/   what `agentfence init` writes out
 tools/       build and validate; never shipped
-pypi/        the uvx entry point
 docs/        design notes
 ```
 

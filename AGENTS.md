@@ -121,7 +121,6 @@ engine/      the code: plan/diff/apply, and the policy renderer
 policy/      the base policy - exactly what lands on a node, nothing else
 templates/   what `agentfence init` hands an admin
 tools/       build and validate; never shipped
-pypi/        the uvx entry point only
 ```
 
 Nothing but base policy goes in `policy/`. It used to also hold the renderer
@@ -140,7 +139,6 @@ and hid two very different kinds of file among the policy.
 | Audit rules | `policy/50-agentfence-audit.rules` |
 | Installer behaviour | `engine/installer-template.sh`, built by `make dist` |
 | How site paths enter the policy | `engine/render-settings.py` |
-| uvx entry point | `pyproject.toml`, `pypi/` |
 | CI and releases | `.github/workflows/` |
 
 No site's real hostnames or filesystem paths belong in this repository. They

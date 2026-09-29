@@ -1,4 +1,4 @@
-.PHONY: help check dist wheel release clean
+.PHONY: help check dist release clean
 
 help:
 	@grep -E '^[a-z-]+:.*?## ' Makefile | sed 's/:.*## /\t/'
@@ -9,9 +9,6 @@ check:   ## validate the config files, no cluster access needed
 dist: check  ## build the installer at dist/agentfence
 	@./tools/build-installer.sh
 
-wheel:  ## build the uvx-installable wheel
-	@uv build --wheel
-
 release: dist  ## tag and push; the release workflow publishes the artefact
 	@test -n "$(V)" || { echo "usage: make release V=v0.1.0"; exit 1; }
 	@git tag -a "$(V)" -m "agentfence $(V)"
@@ -19,4 +16,4 @@ release: dist  ## tag and push; the release workflow publishes the artefact
 	@echo "pushed $(V); watch: gh run watch"
 
 clean:
-	@rm -rf dist *.egg-info
+	@rm -rf dist

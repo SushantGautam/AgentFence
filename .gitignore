@@ -2,7 +2,3 @@
 dist/
 
 .DS_Store
-
-# Python build artefacts
-*.egg-info/
-__pycache__/
