@@ -1,0 +1,30 @@
+# Every push and pull request runs the same offline checks a developer runs.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/validate.sh
+      - run: make dist
+      # The installer must at least run far enough to render the policy and
+      # build a plan. It is not applied here; nothing is changed on the runner.
+      - name: Status runs on a real Linux host
+        run: ./dist/agentfence --role login || [ $? -eq 1 ]
+      - name: Status runs with site paths set
+        env:
+          AGENTFENCE_SHARED_HOMES: /shared/home
+          AGENTFENCE_SHARED_APPS: /shared/apps
+          AGENTFENCE_SHARED_WORKSPACES: /shared/projects
+        run: ./dist/agentfence --role login || [ $? -eq 1 ]
+      - name: A bad site path is refused
+        run: |
+          if AGENTFENCE_SHARED_HOMES=relative/path ./dist/agentfence --role login; then
+            echo "expected a refusal"; exit 1
+          fi

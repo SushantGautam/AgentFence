@@ -1,0 +1,39 @@
+# Builds the installer on a tag and publishes it with its checksum.
+#
+# The checksum is the point: agentfence runs as root on a shared machine, so
+# whoever downloads it needs to verify the artefact before executing it.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # build-installer.sh reads git describe
+
+      # Same checks that gate `make dist` locally. A tag that fails them is
+      # not published rather than published broken.
+      - name: Validate
+        run: ./scripts/validate.sh
+
+      - name: Build
+        run: make dist
+
+      - name: Check the artefact verifies
+        working-directory: dist
+        run: sha256sum -c agentfence.sha256
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentfence
+            dist/agentfence.sha256
+          generate_release_notes: true
