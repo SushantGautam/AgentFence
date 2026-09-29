@@ -11,7 +11,7 @@
 #   ./agentfence doctor       checks, shim resolution, and cplt doctor
 #   ./agentfence uninstall    remove everything it installed
 #
-#   --config FILE   site settings; see "Settings" in README.md
+#   --config FILE   site settings; see "Tell it about your site" in README.md
 #   --policy-dir DIR  site policy laid over the shipped one
 #   --yes           do not ask
 #   --role login|compute|auto        default auto

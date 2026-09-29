@@ -140,6 +140,14 @@ held open, after setting `PrologFlags=contain` in `slurm.conf`.
   unconditionally. A user can still `unset CPLT_CONFIG`; cplt prints an
   unsuppressable warning naming the file whenever the site policy is active,
   which makes its absence visible.
+- The site cplt policy takes the slot of the user's own
+  `~/.config/cplt/config.toml`, which is therefore not read while it is
+  active. Someone relying on a personal `allow.read` — a private registry, say
+  — loses it and has to move that setting into a per-repo config.
+- A per-repo config in `~/.config/cplt/local/` **outranks** the site policy and
+  can override its scalar settings, `allow_lifecycle_scripts` among them.
+  `deny.paths` cannot be unwound that way, because list values only accumulate.
+  This is threat 2 again, and in scope only as something to be honest about.
 - cplt does not wrap `cursor-server`, and neither does anything else here.
   Cursor's agent is covered only by Layer A.
 - cplt sanitises the child environment by default, which conflicts with

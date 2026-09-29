@@ -4,13 +4,27 @@
 # /etc/profile.d/10-agentfence.sh. cplt has no /etc path of its own, but
 # CPLT_CONFIG replaces the whole config file, which is the supported way in.
 #
+# This file does NOT replace cplt's built-in defaults. Its precedence chain,
+# highest first, is: CLI flags, the per-repo user config in
+# ~/.config/cplt/local/, this file, any preset, then the built-in defaults.
+# Anything left unset here keeps cplt's default, so all of its hardcoded
+# blocking - ~/.aws, ~/.azure, ~/.npmrc, ~/.gem/credentials, port 443 only,
+# SSH agent withheld - still applies. We set four scalars and add to one list.
+#
+# Two consequences worth knowing:
+#   - this file takes the slot of the user's own ~/.config/cplt/config.toml,
+#     so a personal config is not read while the site policy is active;
+#   - a per-repo config in ~/.config/cplt/local/ outranks this file and can
+#     override the scalars below. deny.paths cannot be unwound that way,
+#     because list values only ever accumulate.
+#
 # cplt prints an unsuppressable warning naming this file because it sits
 # outside ~/.config/cplt/. That is wanted here: users should see that a site
 # policy is in effect. `--quiet` does not hide it.
 #
 # This is a DEFAULT, not a boundary: a user can unset CPLT_CONFIG. The boundary
 # is the systemd slice, filesystem permissions and Slurm cgroups underneath.
-# See README.md, "Threat model".
+# See docs/design.md, "Threat model", in the AgentFence repository.
 
 [sandbox]
 quiet = true
@@ -24,7 +38,17 @@ mode = "warn"
 protect_default_branch_only = true
 
 [deny]
-# deny.paths merges across layers and tightens unconditionally.
+# deny.paths merges across layers and tightens unconditionally, so nothing
+# below can be undone by a later layer.
+#
+# Most of these restate a cplt default. They are written out anyway so that a
+# sysadmin reading this file on a node sees what is protected without having to
+# go and read cplt's documentation.
+#
+# ~/.config/gh is the one that is not a restatement. cplt allows reading
+# ~/.config/gh/hosts.yml and config.yml by default, and those hold the gh
+# OAuth token; denying the directory is what cplt's own docs recommend for
+# that. The cost is that an agent cannot use gh's stored credentials.
 paths = [
   "~/.ssh",
   "~/.gnupg",
