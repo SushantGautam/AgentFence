@@ -47,6 +47,7 @@ make dist && scp dist/agentfence login1:
 agentfence                 # status: what differs. Exit 0 match, 1 drift, 2 error.
 agentfence apply           # make the node match
 agentfence config          # the settings in effect, and where each came from
+agentfence doctor          # checks, which shims resolve, and cplt doctor
 agentfence init            # write out templates you can edit
 agentfence uninstall       # remove everything it installed
 ```
@@ -59,6 +60,22 @@ The exit codes make `agentfence || alert` work from cron:
 ```bash
 agentfence --nodes "$(cat nodes.txt)" || mail -s "agent policy drift" you@example.org
 ```
+
+`doctor` is the one to run when something is not behaving. It repeats the
+status checks, then reports which shimmed agents are actually installed on this
+machine, then hands over to `cplt doctor` for what only cplt can answer —
+Landlock ABI, kernel version, how it resolves each agent.
+
+```console
+$ agentfence doctor
+Shims
+  = copilot  -> /usr/local/bin/copilot
+  - goose    not installed here; the shim will say so if run
+```
+
+Run it **as the user having the problem**, not under `sudo`: `cplt doctor`
+inspects the calling user's `PATH` and `$HOME`, so as root it reports root's
+environment rather than theirs. It says so when you do.
 
 ## Tell it about your site
 

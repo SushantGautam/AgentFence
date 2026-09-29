@@ -8,6 +8,7 @@
 #   ./agentfence apply        make the node match. Asks first.
 #   ./agentfence init         write the defaults out so you can edit them
 #   ./agentfence config       the settings a run would use, and where from
+#   ./agentfence doctor       checks, shim resolution, and cplt doctor
 #   ./agentfence uninstall    remove everything it installed
 #
 #   --config FILE   site settings; see "Settings" in README.md
@@ -51,7 +52,7 @@ trap '[ -n "$WORK" ] && rm -rf "$WORK"' EXIT
 # ----------------------------------------------------------------------- args
 while [ $# -gt 0 ]; do
     case "$1" in
-        status|apply|uninstall|config|init) ACTION="$1" ;;
+        status|apply|uninstall|config|init|doctor) ACTION="$1" ;;
         --config)      CONFIG_FILE="${2:?--config needs a file}"; shift ;;
         --policy-dir)  POLICY_DIR_ARG="${2:?--policy-dir needs a directory}"; shift ;;
         --role)        ROLE="${2:?--role needs a value}"; shift ;;
@@ -330,7 +331,8 @@ bin/agentfence-shim:/opt/agentfence/bin/agentfence-shim:0755:login,compute:alway
 50-agentfence-user-limits.conf:/etc/systemd/system/user-.slice.d/50-agentfence-user-limits.conf:0644:login:no_existing_limiter
 50-agentfence-root-exempt.conf:/etc/systemd/system/user-0.slice.d/50-agentfence-root-exempt.conf:0644:login:no_existing_limiter
 "
-SHIM_TARGET=/opt/agentfence/bin/agentfence-shim
+SHIM_DIR=/opt/agentfence/bin
+SHIM_TARGET="$SHIM_DIR/agentfence-shim"
 
 # A site directory may add files of its own. They are appended as ordinary
 # rows, so they appear in the plan and are applied, reported and removed by
@@ -575,6 +577,48 @@ print_config() {
     fi
 }
 
+# ---------------------------------------------------------------------- doctor
+# Everything `status` checks, plus the two things only the tools themselves can
+# answer: whether each shimmed agent is actually installed, and what cplt makes
+# of this machine.
+#
+# cplt doctor inspects the *calling user's* environment - their PATH, their
+# $HOME, their agent installs. Run under sudo it reports root's view, which is
+# not what any user gets, so it says so rather than implying otherwise.
+run_doctor() {
+    preflight
+
+    heading "Shims"
+    local agent real found
+    for agent in $AGENTFENCE_SHIM_AGENTS; do
+        found=""
+        IFS=:
+        for real in $PATH; do
+            [ "$real" = "$SHIM_DIR" ] && continue
+            [ -x "$real/$agent" ] && { found="$real/$agent"; break; }
+        done
+        unset IFS
+        if [ -n "$found" ]; then
+            same "$agent  -> $found"
+        else
+            note "$agent  not installed here; the shim will say so if run"
+        fi
+    done
+
+    heading "cplt"
+    if ! command -v cplt >/dev/null 2>&1; then
+        note "cplt is not installed, so no agent but Claude Code is sandboxed"
+        return 0
+    fi
+    if [ "$(id -u)" = 0 ]; then
+        note "running as root: cplt doctor reports root's environment, not a user's"
+        note "for what a user sees, run 'agentfence doctor' as that user"
+    fi
+    say ""
+    CPLT_CONFIG="${CPLT_CONFIG:-/etc/agentfence/cplt.toml}" cplt doctor 2>&1 | sed 's/^/  /' \
+        || note "cplt doctor reported a problem (above)"
+}
+
 # ------------------------------------------------------------------------ init
 # Writes the shipped defaults out so an admin has something to edit. This is
 # the only way to get a starting point without a source checkout.
@@ -751,6 +795,10 @@ remove_everything() {
 
 # ------------------------------------------------------------------------ run
 case "$ACTION" in
+    doctor)
+        run_doctor
+        exit "$([ "$FAILED" = 1 ] && echo $E_FAIL || echo $E_OK)" ;;
+
     init)
         do_init
         exit "$([ "$FAILED" = 1 ] && echo $E_FAIL || echo $E_OK)" ;;

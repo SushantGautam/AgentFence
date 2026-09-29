@@ -89,6 +89,15 @@ jobs:
             echo "expected a refusal for --policy-dir"; exit 1
           fi
 
+      - name: doctor runs and reports shim resolution
+        run: |
+          out=$(./dist/agentfence doctor --role login)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "Shims"
+          printf '%s' "$out" | grep -q "copilot"
+          # cplt is not installed on the runner; doctor must say so, not crash.
+          printf '%s' "$out" | grep -q "cplt is not installed"
+
       - name: A shim name cplt cannot launch is refused
         run: |
           for bad in bash claude cc nonsense; do
