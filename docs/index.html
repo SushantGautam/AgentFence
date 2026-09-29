@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentFence — sandbox AI coding agents on shared Linux hosts</title>
+<meta name="description" content="AgentFence puts guardrails around AI coding agents — Claude Code, GitHub Copilot CLI, OpenCode, Antigravity, Pi, goose — on shared Linux hosts: HPC clusters, lab servers, jump hosts. One self-contained installer, no sandbox of its own.">
+<link rel="canonical" href="https://sushantgautam.github.io/AgentFence/">
+<meta name="author" content="Sushant Gautam">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AgentFence">
+<meta property="og:title" content="AgentFence — sandbox AI coding agents on shared Linux hosts">
+<meta property="og:description" content="Guardrails for Claude Code, Copilot CLI, OpenCode, Antigravity, Pi and goose on multi-user Linux machines. It writes no sandbox of its own — it switches on the ones the agents already ship.">
+<meta property="og:url" content="https://sushantgautam.github.io/AgentFence/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="AgentFence — sandbox AI coding agents on shared Linux hosts">
+<meta name="twitter:description" content="Guardrails for AI coding agents on HPC clusters, lab servers and jump hosts. One self-contained installer.">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#x1F6E1;</text></svg>">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "AgentFence",
+  "description": "Guardrails for AI coding agents on shared Linux hosts. Switches on and standardises the sandboxes agents already ship, and puts ordinary OS limits underneath them.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux",
+  "softwareVersion": "0.1.0",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://sushantgautam.github.io/AgentFence/",
+  "codeRepository": "https://github.com/SushantGautam/AgentFence",
+  "programmingLanguage": ["Shell", "Python"],
+  "author": {"@type": "Person", "name": "Sushant Gautam"},
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+}
+</script>
+
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --line:#d1d9e0;
+  --code-bg:#f6f8fa; --accent:#0969da; --warn-bg:#fff8c5; --warn-line:#d4a72c;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --line:#3d444d;
+    --code-bg:#151b23; --accent:#4493f8; --warn-bg:#282215; --warn-line:#9e6a03;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --line:#3d444d;
+  --code-bg:#151b23; --accent:#4493f8; --warn-bg:#282215; --warn-line:#9e6a03;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:760px; margin:0 auto; padding:0 16px}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+header{padding:64px 0 40px; border-bottom:1px solid var(--line)}
+h1{font-size:2.6rem; line-height:1.15; margin:0 0 .4em; letter-spacing:-.02em}
+.tagline{font-size:1.2rem; color:var(--muted); margin:0 0 1.4em; max-width:34em}
+h2{font-size:1.35rem; margin:2.4em 0 .6em; letter-spacing:-.01em}
+h3{font-size:1rem; margin:1.6em 0 .4em}
+p{margin:0 0 1em; max-width:38em}
+ul{max-width:38em; padding-left:1.2em}
+li{margin:.35em 0}
+code{font-family:var(--mono); font-size:.88em; background:var(--code-bg);
+  padding:.15em .35em; border-radius:4px}
+pre{background:var(--code-bg); border:1px solid var(--line); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; margin:0 0 1em}
+pre code{background:none; padding:0; font-size:.85rem; line-height:1.6}
+.badges{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 1.6em}
+.badge{font-size:.78rem; color:var(--muted); border:1px solid var(--line);
+  border-radius:999px; padding:3px 11px}
+.cta{display:inline-block; background:var(--accent); color:#fff; font-weight:600;
+  padding:9px 18px; border-radius:7px; margin:0 8px 8px 0}
+.cta:hover{text-decoration:none; opacity:.9}
+.cta.alt{background:transparent; color:var(--fg); border:1px solid var(--line)}
+.note{background:var(--warn-bg); border-left:3px solid var(--warn-line);
+  padding:14px 16px; border-radius:0 6px 6px 0; margin:0 0 1em; max-width:38em}
+.note p:last-child{margin:0}
+table{border-collapse:collapse; width:100%; margin:0 0 1em; font-size:.93rem; display:block; overflow-x:auto}
+th,td{border:1px solid var(--line); padding:7px 11px; text-align:left; vertical-align:top}
+th{background:var(--code-bg); font-weight:600}
+footer{border-top:1px solid var(--line); margin-top:56px; padding:28px 0 56px;
+  color:var(--muted); font-size:.9rem}
+.cmt{color:var(--muted)}
+@media (max-width:600px){
+  header{padding:44px 0 32px}
+  h1{font-size:2rem}
+  .tagline{font-size:1.06rem}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>AgentFence</h1>
+    <p class="tagline">Guardrails for AI coding agents on shared Linux hosts — an HPC
+    cluster, a lab server, a jump host, anywhere several people share one machine.</p>
+    <div class="badges">
+      <span class="badge">v0.1.0</span>
+      <span class="badge">MIT</span>
+      <span class="badge">One file</span>
+      <span class="badge">bash + python3</span>
+      <span class="badge">No network at run time</span>
+    </div>
+    <a class="cta" href="https://github.com/SushantGautam/AgentFence">View on GitHub</a>
+    <a class="cta alt" href="https://github.com/SushantGautam/AgentFence/releases/latest">Download v0.1.0</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <h2>What it is</h2>
+  <p>AgentFence stops an AI coding agent doing damage by accident: deleting the
+  wrong files, reading other people's home directories, cancelling other people's
+  jobs, or taking a login node down with it.</p>
+
+  <p>It <strong>writes no sandbox of its own</strong>. It switches on and
+  standardises the ones the agents already ship — Claude Code's bubblewrap
+  sandbox, and <a href="https://github.com/navikt/cplt">cplt</a>'s Landlock and
+  seccomp for everything else — then puts ordinary systemd and filesystem limits
+  underneath them.</p>
+
+  <p>Covered agents: <strong>Claude Code</strong>, <strong>GitHub Copilot
+  CLI</strong>, <strong>OpenCode</strong>, <strong>Antigravity</strong>,
+  <strong>Pi</strong> and <strong>goose</strong>.</p>
+
+  <h2>Install</h2>
+  <pre><code>curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence
+curl -fsSLO https://github.com/SushantGautam/AgentFence/releases/latest/download/agentfence.sha256
+sha256sum -c agentfence.sha256
+chmod +x agentfence
+
+sudo ./agentfence          <span class="cmt"># what would change. Changes nothing.</span>
+sudo ./agentfence apply    <span class="cmt"># make it so. Asks first.</span></code></pre>
+
+  <p>One self-contained file. It needs bash, coreutils and python3, nothing else,
+  and no network access at run time — which matters on cluster nodes that have
+  none.</p>
+
+  <h2>What it does on a node</h2>
+  <ul>
+    <li>Blocks an agent from reading <code>~/.ssh</code> or other users' homes,
+      writing to <code>/etc</code>, running <code>sudo</code>, or cancelling
+      other people's Slurm jobs.</li>
+    <li>Caps per-user memory, CPU and PIDs on <strong>login nodes only</strong>,
+      and only when nothing else already does that job. Compute nodes stay
+      Slurm's.</li>
+    <li>Records any edit to the policy files with auditd.</li>
+    <li>Converges: <code>apply</code> covers first install, upgrade, and
+      repairing a node someone edited by hand.</li>
+  </ul>
+
+  <h2>Six verbs</h2>
+  <table>
+    <tr><th>Command</th><th>Does</th></tr>
+    <tr><td><code>agentfence</code></td><td>Status. Exit 0 match, 1 drift, 2 error — so <code>agentfence || alert</code> works from cron.</td></tr>
+    <tr><td><code>agentfence apply</code></td><td>Make the node match. Asks first.</td></tr>
+    <tr><td><code>agentfence config</code></td><td>Settings in effect, and which layer each came from.</td></tr>
+    <tr><td><code>agentfence doctor</code></td><td>Checks, which shims resolve, and <code>cplt doctor</code>.</td></tr>
+    <tr><td><code>agentfence init</code></td><td>Write out templates you can edit.</td></tr>
+    <tr><td><code>agentfence uninstall</code></td><td>Remove everything it installed.</td></tr>
+  </table>
+
+  <h2>Customise without forking</h2>
+  <p>Your filesystem layout and caps are settings, not source edits. Policy is
+  layered on top of what ships, never replaced wholesale:</p>
+
+  <pre><code>agentfence init --config ./site.conf --policy-dir ./policy
+agentfence apply --config ./site.conf --policy-dir ./policy</code></pre>
+
+  <p><code>&lt;name&gt;.append</code> adds to a shipped file,
+  <code>managed-settings.overlay.json</code> merges into the Claude Code policy,
+  and a <code>desired-state</code> manifest installs files of your own. Overlays
+  can <em>add</em> rules but cannot remove a shipped one by omission, and cannot
+  switch the sandbox off — that is refused before anything is written.</p>
+
+  <h2>How far this is tested</h2>
+  <div class="note">
+    <p><strong>CI</strong> installs it on a throwaway Ubuntu runner on every push
+    and verifies the policy that lands is valid, that a second <code>apply</code>
+    is a no-op, that tampering is detected and repaired, and that
+    <code>uninstall</code> leaves nothing behind.</p>
+    <p><strong>It has not run on a real multi-user machine</strong> — no real
+    users, no shared filesystem, no Slurm, and CI installs neither
+    <code>bwrap</code> nor <code>cplt</code>. The convergence logic is exercised;
+    the enforcement is not. Treat a first <code>apply</code> on a real node as
+    untested: one node, watched.</p>
+  </div>
+
+  <h2>Scope</h2>
+  <p>AgentFence addresses an agent doing something destructive under its user's
+  own authority. It deliberately does <em>not</em> defend against a user who sets
+  out to bypass it — that user already has a shell, and the agent adds no
+  capability they lack. Designing for that produces an unmaintainable
+  AppArmor and exec-interception arms race.</p>
+
+  <h2>Read more</h2>
+  <ul>
+    <li><a href="https://github.com/SushantGautam/AgentFence#readme">README</a> —
+      install, settings, customising policy</li>
+    <li><a href="https://github.com/SushantGautam/AgentFence/blob/main/docs/design.md">Design notes</a> —
+      threat model, architecture, what was rejected and why, known limits</li>
+    <li><a href="https://github.com/SushantGautam/AgentFence/releases">Releases</a></li>
+  </ul>
+
+</main>
+
+<footer class="wrap">
+  <p>MIT licensed. Built by <a href="https://github.com/SushantGautam">Sushant Gautam</a>.
+  Uses <a href="https://github.com/navikt/cplt">cplt</a> by NAV.</p>
+</footer>
+
+</body>
+</html>

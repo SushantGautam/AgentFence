@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sushantgautam.github.io/AgentFence/sitemap.xml
